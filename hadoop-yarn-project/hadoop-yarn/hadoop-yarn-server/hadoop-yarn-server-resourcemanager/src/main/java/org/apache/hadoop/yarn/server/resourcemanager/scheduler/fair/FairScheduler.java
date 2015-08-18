@@ -1651,6 +1651,11 @@ public class FairScheduler extends
   }
 
   @Override
+  public boolean getAsyncSchedulingEnabled() {
+    return continuousSchedulingEnabled;
+  }
+
+  @Override
   public Set<String> getPlanQueues() throws YarnException {
     Set<String> planQueues = new HashSet<String>();
     for (FSQueue fsQueue : queueMgr.getQueues()) {

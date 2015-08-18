@@ -160,6 +160,7 @@ public class NMSimulator extends TaskRunner.Task {
         }
       }
     }
+    updateRepeatInterval(beatResponse.getNextHeartbeatInterval());
     if (beatResponse.getNodeAction() == NodeAction.SHUTDOWN) {
       lastStep();
     }

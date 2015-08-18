@@ -29,6 +29,13 @@ public interface NodeStatusUpdater extends Service {
    * of containers on the node has changed to notify the RM sooner.
    */
   void sendOutofBandHeartBeat();
+  void sendOutofBandHeartBeat(EventBasedHeartbeatSendRequest hbReq);
+
+  public static enum EventBasedHeartbeatSendRequest {
+    NONE,
+    MINIMUM_DELAY,
+    IMMEDIATELY,
+  }
 
   /**
    * Get the ResourceManager identifier received during registration

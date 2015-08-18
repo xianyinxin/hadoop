@@ -176,6 +176,7 @@ public class ContainerManagerImpl extends CompositeService implements
   private final WriteLock writeLock;
 
   private long waitForContainersOnShutdownMillis;
+  private boolean eventBasedHeartbeatEnabled;
 
   public ContainerManagerImpl(Context context, ContainerExecutor exec,
       DeletionService deletionContext, NodeStatusUpdater nodeStatusUpdater,
@@ -245,6 +246,10 @@ public class ContainerManagerImpl extends CompositeService implements
         conf.getLong(YarnConfiguration.NM_PROCESS_KILL_WAIT_MS,
             YarnConfiguration.DEFAULT_NM_PROCESS_KILL_WAIT_MS) +
         SHUTDOWN_CLEANUP_SLOP_MS;
+
+    eventBasedHeartbeatEnabled =
+        conf.getBoolean(YarnConfiguration.NM_EVENT_BASED_HEARTBEAT_ENABLED,
+            YarnConfiguration.DEFAULT_NM_EVENT_BASED_HEARTBEAT_ENABLED);
 
     super.serviceInit(conf);
     recover();
@@ -322,7 +327,8 @@ public class ContainerManagerImpl extends CompositeService implements
       Container container = new ContainerImpl(getConfig(), dispatcher,
           context.getNMStateStore(), req.getContainerLaunchContext(),
           credentials, metrics, token, rcs.getStatus(), rcs.getExitCode(),
-          rcs.getDiagnostics(), rcs.getKilled());
+          rcs.getDiagnostics(), rcs.getKilled(),
+          eventBasedHeartbeatEnabled ? nodeStatusUpdater : null);
       context.getContainers().put(containerId, container);
       dispatcher.getEventHandler().handle(
           new ApplicationContainerInitEvent(container));
@@ -853,7 +859,8 @@ public class ContainerManagerImpl extends CompositeService implements
     Container container =
         new ContainerImpl(getConfig(), this.dispatcher,
             context.getNMStateStore(), launchContext,
-          credentials, metrics, containerTokenIdentifier);
+            credentials, metrics, containerTokenIdentifier,
+            eventBasedHeartbeatEnabled ? nodeStatusUpdater : null);
     ApplicationId applicationID =
         containerId.getApplicationAttemptId().getApplicationId();
     if (context.getContainers().putIfAbsent(containerId, container) != null) {

@@ -926,6 +926,11 @@ final public class ResourceSchedulerWrapper
   }
 
   @Override
+  public boolean getAsyncSchedulingEnabled() {
+    return scheduler.getAsyncSchedulingEnabled();
+  }
+
+  @Override
   @LimitedPrivate("yarn")
   @Unstable
   public Resource getClusterResource() {
@@ -941,8 +946,14 @@ final public class ResourceSchedulerWrapper
   @Override
   public Map<ApplicationId, SchedulerApplication<SchedulerApplicationAttempt>>
       getSchedulerApplications() {
-    return new HashMap<ApplicationId,
-        SchedulerApplication<SchedulerApplicationAttempt>>();
+    return ((AbstractYarnScheduler)scheduler).getSchedulerApplications();
+  }
+
+  @Override
+  public SchedulerApplicationAttempt getApplicationAttempt(
+      ApplicationAttemptId applicationAttemptId) {
+    return ((AbstractYarnScheduler)scheduler)
+        .getApplicationAttempt(applicationAttemptId);
   }
 
   @Override
@@ -958,5 +969,4 @@ final public class ResourceSchedulerWrapper
     // TODO Dummy implementation.
     return Priority.newInstance(0);
   }
-
 }

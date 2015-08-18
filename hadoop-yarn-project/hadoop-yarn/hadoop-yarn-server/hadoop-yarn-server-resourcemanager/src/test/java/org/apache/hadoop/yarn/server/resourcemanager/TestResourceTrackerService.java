@@ -98,10 +98,10 @@ public class TestResourceTrackerService extends NodeLabelTestBase {
     MockNM nm2 = rm.registerNode("host2:5678", 10240);
 
     NodeHeartbeatResponse nodeHeartbeat = nm1.nodeHeartbeat(true);
-    Assert.assertEquals(4000, nodeHeartbeat.getNextHeartBeatInterval());
+    Assert.assertEquals(4000, nodeHeartbeat.getNextHeartbeatInterval());
 
     NodeHeartbeatResponse nodeHeartbeat2 = nm2.nodeHeartbeat(true);
-    Assert.assertEquals(4000, nodeHeartbeat2.getNextHeartBeatInterval());
+    Assert.assertEquals(4000, nodeHeartbeat2.getNextHeartbeatInterval());
 
   }
 

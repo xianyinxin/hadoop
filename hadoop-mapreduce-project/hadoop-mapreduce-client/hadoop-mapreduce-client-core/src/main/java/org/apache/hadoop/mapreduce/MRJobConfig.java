@@ -650,6 +650,14 @@ public interface MRJobConfig {
     MR_AM_PREFIX + "scheduler.heartbeat.interval-ms";
   public static final int DEFAULT_MR_AM_TO_RM_HEARTBEAT_INTERVAL_MS = 1000;
 
+  public static final String MR_AM_TO_RM_EVENT_BASED_HEARTBEAT_ENABLED =
+      MR_AM_PREFIX + "scheduler.event-based-heartbeat.enabled";
+  public static final boolean DEFAULT_MR_AM_TO_RM_EVENT_BASED_HEARTBEAT_ENABLED = true;
+
+  public static final String MR_AM_TO_RM_EVENT_BASED_HEARTBEAT_INTERVAL_MS =
+      MR_AM_PREFIX + "scheduler.event-based-heartbeat.interval-ms";
+  public static final int DEFAULT_MR_AM_TO_RM_EVENT_BASED_HEARTBEAT_INTERVAL_MS = 50;
+
   /**
    * If contact with RM is lost, the AM will wait MR_AM_TO_RM_WAIT_INTERVAL_MS
    * milliseconds before aborting. During this interval, AM will still try

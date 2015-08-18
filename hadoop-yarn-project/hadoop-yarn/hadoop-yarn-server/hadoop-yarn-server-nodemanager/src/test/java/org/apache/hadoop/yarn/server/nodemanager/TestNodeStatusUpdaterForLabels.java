@@ -174,7 +174,7 @@ public class TestNodeStatusUpdaterForLabels extends NodeLabelTestBase {
               NodeAction.NORMAL, null, null, null, null, 1000L);
 
       // to ensure that heartbeats are sent only when required.
-      nhResponse.setNextHeartBeatInterval(Long.MAX_VALUE);
+      nhResponse.setNextHeartbeatInterval(Long.MAX_VALUE);
       nhResponse.setAreNodeLabelsAcceptedByRM(labels != null);
 
       synchronized (ResourceTrackerForLabels.class) {

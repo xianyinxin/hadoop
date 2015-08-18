@@ -23,6 +23,7 @@ import java.net.InetSocketAddress;
 import java.nio.ByteBuffer;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.LinkedHashSet;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentMap;
@@ -32,6 +33,7 @@ import org.apache.commons.logging.LogFactory;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.CommonConfigurationKeysPublic;
 import org.apache.hadoop.ipc.Server;
+import org.apache.hadoop.metrics2.lib.MutableStat;
 import org.apache.hadoop.net.Node;
 import org.apache.hadoop.security.authorize.PolicyProvider;
 import org.apache.hadoop.service.AbstractService;
@@ -47,7 +49,6 @@ import org.apache.hadoop.yarn.api.records.NodeLabel;
 import org.apache.hadoop.yarn.api.records.Resource;
 import org.apache.hadoop.yarn.conf.YarnConfiguration;
 import org.apache.hadoop.yarn.exceptions.YarnException;
-import org.apache.hadoop.yarn.exceptions.YarnRuntimeException;
 import org.apache.hadoop.yarn.factories.RecordFactory;
 import org.apache.hadoop.yarn.factory.providers.RecordFactoryProvider;
 import org.apache.hadoop.yarn.ipc.YarnRPC;
@@ -72,6 +73,9 @@ import org.apache.hadoop.yarn.server.resourcemanager.rmnode.RMNodeImpl;
 import org.apache.hadoop.yarn.server.resourcemanager.rmnode.RMNodeReconnectEvent;
 import org.apache.hadoop.yarn.server.resourcemanager.rmnode.RMNodeStartedEvent;
 import org.apache.hadoop.yarn.server.resourcemanager.rmnode.RMNodeStatusEvent;
+import org.apache.hadoop.yarn.server.resourcemanager.scheduler.ResourceScheduler;
+import org.apache.hadoop.yarn.server.resourcemanager.scheduler.SchedulerMetrics;
+import org.apache.hadoop.yarn.server.resourcemanager.scheduler.SchedulerNodeReport;
 import org.apache.hadoop.yarn.server.resourcemanager.security.NMTokenSecretManagerInRM;
 import org.apache.hadoop.yarn.server.resourcemanager.security.RMContainerTokenSecretManager;
 import org.apache.hadoop.yarn.server.resourcemanager.security.authorize.RMPolicyProvider;
@@ -95,7 +99,11 @@ public class ResourceTrackerService extends AbstractService implements
   private final RMContainerTokenSecretManager containerTokenSecretManager;
   private final NMTokenSecretManagerInRM nmTokenSecretManager;
 
-  private long nextHeartBeatInterval;
+  private boolean throttleHeartbeat;
+  private long defaultHeartbeatInterval;
+  private long minHeartbeatInterval;
+  private long maxHeartbeatInterval;
+  private ThrottleHeartbeatPolicy heartbeatPolicy;
   private Server server;
   private InetSocketAddress resourceTrackerAddress;
   private String minimumNodeManagerVersion;
@@ -128,14 +136,40 @@ public class ResourceTrackerService extends AbstractService implements
         YarnConfiguration.DEFAULT_RM_RESOURCE_TRACKER_PORT);
 
     RackResolver.init(conf);
-    nextHeartBeatInterval =
+    throttleHeartbeat =
+        conf.getBoolean(YarnConfiguration.THROTTLE_HEARTBEAT_ENABLED,
+            YarnConfiguration.DEFAULT_THROTTLE_HEARTBEAT_ENABLED);
+    defaultHeartbeatInterval =
         conf.getLong(YarnConfiguration.RM_NM_HEARTBEAT_INTERVAL_MS,
             YarnConfiguration.DEFAULT_RM_NM_HEARTBEAT_INTERVAL_MS);
-    if (nextHeartBeatInterval <= 0) {
-      throw new YarnRuntimeException("Invalid Configuration. "
+    if (defaultHeartbeatInterval <= 0) {
+      defaultHeartbeatInterval =
+          YarnConfiguration.DEFAULT_RM_NM_HEARTBEAT_INTERVAL_MS;
+      LOG.warn("Invalid Configuration. "
           + YarnConfiguration.RM_NM_HEARTBEAT_INTERVAL_MS
-          + " should be larger than 0.");
+          + " should be larger than 0. Now use the default value.");
     }
+    minHeartbeatInterval =
+        conf.getLong(YarnConfiguration.RM_NM_MIN_HEARTBEAT_INTERVAL_MS,
+            YarnConfiguration.DEFAULT_RM_NM_MIN_HEARTBEAT_INTERVAL_MS);
+    maxHeartbeatInterval =
+        conf.getLong(YarnConfiguration.RM_NM_MAX_HEARTBEAT_INTERVAL_MS,
+            YarnConfiguration.DEFAULT_RM_NM_MAX_HEARTBEAT_INTERVAL_MS);
+    if (minHeartbeatInterval <= 0) {
+      minHeartbeatInterval =
+          YarnConfiguration.DEFAULT_RM_NM_MIN_HEARTBEAT_INTERVAL_MS;
+      LOG.warn("Invalid Configuration. "
+          + YarnConfiguration.RM_NM_MIN_HEARTBEAT_INTERVAL_MS
+          + " should be larger than 0. Now use the default value.");
+    }
+    if (maxHeartbeatInterval <= 0) {
+      maxHeartbeatInterval =
+          YarnConfiguration.DEFAULT_RM_NM_MAX_HEARTBEAT_INTERVAL_MS;
+      LOG.warn("Invalid Configuration. "
+          + YarnConfiguration.RM_NM_MAX_HEARTBEAT_INTERVAL_MS
+          + " should be larger than 0. Now use the default value.");
+    }
+    heartbeatPolicy = new ThrottleHeartbeatPolicy();
 
     minAllocMb = conf.getInt(
     	YarnConfiguration.RM_SCHEDULER_MINIMUM_ALLOCATION_MB,
@@ -164,12 +198,12 @@ public class ResourceTrackerService extends AbstractService implements
     this.server =
       rpc.getServer(ResourceTracker.class, this, resourceTrackerAddress,
           conf, null,
-          conf.getInt(YarnConfiguration.RM_RESOURCE_TRACKER_CLIENT_THREAD_COUNT, 
+          conf.getInt(YarnConfiguration.RM_RESOURCE_TRACKER_CLIENT_THREAD_COUNT,
               YarnConfiguration.DEFAULT_RM_RESOURCE_TRACKER_CLIENT_THREAD_COUNT));
     
     // Enable service authorization?
     if (conf.getBoolean(
-        CommonConfigurationKeysPublic.HADOOP_SECURITY_AUTHORIZATION, 
+        CommonConfigurationKeysPublic.HADOOP_SECURITY_AUTHORIZATION,
         false)) {
       InputStream inputStream =
           this.rmContext.getConfigurationProvider()
@@ -183,9 +217,9 @@ public class ResourceTrackerService extends AbstractService implements
  
     this.server.start();
     conf.updateConnectAddr(YarnConfiguration.RM_BIND_HOST,
-			   YarnConfiguration.RM_RESOURCE_TRACKER_ADDRESS,
-			   YarnConfiguration.DEFAULT_RM_RESOURCE_TRACKER_ADDRESS,
-                           server.getListenerAddress());
+        YarnConfiguration.RM_RESOURCE_TRACKER_ADDRESS,
+        YarnConfiguration.DEFAULT_RM_RESOURCE_TRACKER_ADDRESS,
+        server.getListenerAddress());
   }
 
   @Override
@@ -373,6 +407,8 @@ public class ResourceTrackerService extends AbstractService implements
           StringUtils.join(",", nodeLabels) + " } ");
     }
 
+    heartbeatPolicy.addNode(nodeId);
+
     LOG.info(message.toString());
     response.setNodeAction(NodeAction.NORMAL);
     response.setRMIdentifier(ResourceManager.getClusterTimeStamp());
@@ -445,7 +481,8 @@ public class ResourceTrackerService extends AbstractService implements
     NodeHeartbeatResponse nodeHeartBeatResponse = YarnServerBuilderUtils
         .newNodeHeartbeatResponse(lastNodeHeartbeatResponse.
             getResponseId() + 1, NodeAction.NORMAL, null, null, null, null,
-            nextHeartBeatInterval);
+            heartbeatPolicy.getNextHeartbeatInterval(nodeId),
+            heartbeatPolicy.getIsEventBasedHeartbeatIntervalUpdated());
     rmNode.updateNodeHeartbeatResponseForCleanup(nodeHeartBeatResponse);
 
     populateKeys(request, nodeHeartBeatResponse);
@@ -502,6 +539,7 @@ public class ResourceTrackerService extends AbstractService implements
     this.nmLivelinessMonitor.unregister(nodeId);
     this.rmContext.getDispatcher().getEventHandler()
         .handle(new RMNodeEvent(nodeId, RMNodeEventType.SHUTDOWN));
+    heartbeatPolicy.removeNode(nodeId);
     return response;
   }
 
@@ -572,5 +610,135 @@ public class ResourceTrackerService extends AbstractService implements
   @VisibleForTesting
   public Server getServer() {
     return this.server;
+  }
+
+  private class ThrottleHeartbeatPolicy {
+    private int REST_BEAT_RATE = 100;
+    private final ResourceScheduler scheduler = rmContext.getScheduler();
+    private final SchedulerMetrics schedulerMetrics =
+        SchedulerMetrics.getMetrics();
+
+    private final Set<NodeId> clusterNodes = new LinkedHashSet<>();
+    private final Set<NodeId> heavyNodes = new LinkedHashSet<>();
+
+    public synchronized void updateNodesStatus(NodeId id, boolean heavy) {
+      if (heavy) {
+        heavyNodes.add(id);
+      } else {
+        heavyNodes.remove(id);
+      }
+    }
+
+    private void updateRestBeatRate() {
+      // an empirical formula to determine the REST_BEAT_RATE according to
+      // the cluster's size. Several values for certain size:
+      // cluster's size    REST_BEAT_RATE
+      //  < 500               100
+      //    1000              521
+      //    2000              958
+      //    5000              1535
+      //    10000             1972
+      REST_BEAT_RATE = (int)(Math.log(getNumClusterNodes()) * 630 - 3830);
+      REST_BEAT_RATE = REST_BEAT_RATE > 100 ? REST_BEAT_RATE : 100;
+    }
+
+    public int getNumHeavyNodes() {
+      return heavyNodes.size();
+    }
+
+    public synchronized void addNode(NodeId id) {
+      clusterNodes.add(id);
+      updateRestBeatRate();
+    }
+
+    public synchronized void removeNode(NodeId id) {
+      clusterNodes.remove(id);
+      updateRestBeatRate();
+    }
+
+    public int getNumClusterNodes() {
+      return clusterNodes.size();
+    }
+
+    public long getNextHeartbeatInterval(NodeId nodeId) {
+      if (!throttleHeartbeat) {
+        return defaultHeartbeatInterval;
+      } else {
+        if (!scheduler.getAsyncSchedulingEnabled()) {
+          Resource availRes =
+              scheduler.getNodeReport(nodeId).getAvailableResource();
+          if (isResGreaterOrEqualThanOne(availRes.getMemory(),
+              availRes.getVirtualCores())) {
+            updateNodesStatus(nodeId, false);
+          } else {
+            updateNodesStatus(nodeId, true);
+            // TODO: we'd better enable event-based heartbeat for this case
+            // thus we can return maxHeartbeatInterval to reduce the communications
+            return 3 * defaultHeartbeatInterval;
+          }
+
+          double regularInterval;
+          double saturatedInterval;
+          double remaining = 0.0;
+          int needs = scheduler.getRootQueueMetrics().getPendingContainers();
+          // TODO: consider unhealthy nodes
+          int numResAvailNodes = getNumClusterNodes() - getNumHeavyNodes();
+
+          double accRate =
+              (needs - numResAvailNodes) > 0
+                  ? (double) (needs - numResAvailNodes)
+                  / (numResAvailNodes == 0 ? 1 : numResAvailNodes) : 1;
+          regularInterval =
+              numResAvailNodes * 1000L / (REST_BEAT_RATE * accRate);
+
+          MutableStat.StatInfo eventsHandlingStat =
+              schedulerMetrics.getEventsHandlingStat();
+          MutableStat.StatInfo nodeUpdateDurationStat =
+              schedulerMetrics.getNodeUpdateDurationStat();
+          // If there hasn't been stat data yet.
+          if (eventsHandlingStat == null || nodeUpdateDurationStat == null) {
+            saturatedInterval = minHeartbeatInterval;
+          } else {
+            saturatedInterval =
+                numResAvailNodes
+                    * schedulerMetrics.getNodeUpdateDurationStat().avg();
+            // remaining time that processing blocked events
+            remaining = schedulerMetrics.getNumWaitingEvents()
+                * (schedulerMetrics.getMetricUpdateIntervalMills()
+                / eventsHandlingStat.avg());
+          }
+
+          regularInterval += remaining;
+
+          long interval = (long) (regularInterval > saturatedInterval
+                ? regularInterval : saturatedInterval);
+
+          interval =
+              interval > minHeartbeatInterval ? interval : minHeartbeatInterval;
+          return
+              interval < maxHeartbeatInterval ? interval : maxHeartbeatInterval;
+        } else {
+          // If async scheduling is enabled, node heartbeat will not
+          // overload scheduler in general, and since node heartbeat
+          // won't trigger scheduling and nodes can trigger out-of-band
+          // heartbeat when important events happens, it doesn't matter
+          // we set the node heartbeat interval to a relatively larger value.
+          return defaultHeartbeatInterval;
+        }
+      }
+    }
+
+    public boolean isResGreaterOrEqualThanOne(int memory, int vcore) {
+      return (vcore > 0)
+          && (memory >= scheduler.getMinimumResourceCapability().getMemory());
+    }
+
+    public boolean getIsEventBasedHeartbeatIntervalUpdated() {
+      if (SchedulerMetrics.getMetrics().getSchedulerLoad() ==
+          SchedulerMetrics.SchedulerLoad.HEAVY) {
+        return true;
+      }
+      return false;
+    }
   }
 }

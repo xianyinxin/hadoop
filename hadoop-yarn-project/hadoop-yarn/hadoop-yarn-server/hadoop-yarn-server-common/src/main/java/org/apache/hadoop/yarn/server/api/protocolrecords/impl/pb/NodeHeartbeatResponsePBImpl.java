@@ -441,16 +441,28 @@ public class NodeHeartbeatResponsePBImpl extends
   }
 
   @Override
-  public long getNextHeartBeatInterval() {
+  public long getNextHeartbeatInterval() {
     NodeHeartbeatResponseProtoOrBuilder p = viaProto ? proto : builder;
-    return (p.getNextHeartBeatInterval());
+    return (p.getNextHeartbeatInterval());
   }
 
   @Override
-  public void setNextHeartBeatInterval(long nextHeartBeatInterval) {
+  public void setNextHeartbeatInterval(long nextHeartBeatInterval) {
     maybeInitBuilder();
-    builder.setNextHeartBeatInterval(nextHeartBeatInterval);
+    builder.setNextHeartbeatInterval(nextHeartBeatInterval);
   }
+
+  @Override
+  public boolean getIsEventBasedHeartbeatIntervalUpdated() {
+    NodeHeartbeatResponseProtoOrBuilder p = viaProto ? proto : builder;
+    return (p.getIsEventBasedHeartbeatIntervalUpdated());
+  };
+
+  @Override
+  public void setIsEventBasedHeartbeatIntervalUpdated(boolean isEventBasedHeartbeatIntervalUpdated) {
+    maybeInitBuilder();
+    builder.setIsEventBasedHeartbeatIntervalUpdated(isEventBasedHeartbeatIntervalUpdated);
+  };
 
   private ContainerIdPBImpl convertFromProtoFormat(ContainerIdProto p) {
     return new ContainerIdPBImpl(p);

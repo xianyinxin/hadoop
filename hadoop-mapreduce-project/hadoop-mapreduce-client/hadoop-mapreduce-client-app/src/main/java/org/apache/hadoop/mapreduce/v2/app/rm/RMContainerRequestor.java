@@ -202,6 +202,8 @@ public abstract class RMContainerRequestor extends RMCommunicator {
           new ArrayList<ContainerId>(release), blacklistRequest);
     AllocateResponse allocateResponse = scheduler.allocate(allocateRequest);
     lastResponseID = allocateResponse.getResponseId();
+    updateHeartbeatInterval((int)allocateResponse.getNextHeartbeatInterval(),
+        allocateResponse.getIsEventBasedHeartbeatIntervalUpdated());
     availableResources = allocateResponse.getAvailableResources();
     lastClusterNmCount = clusterNmCount;
     clusterNmCount = allocateResponse.getNumClusterNodes();
@@ -518,7 +520,8 @@ public abstract class RMContainerRequestor extends RMCommunicator {
     // containing an object that matches new resource object but with different
     // numContainers. So existing values must be replaced explicitly
     ask.remove(remoteRequest);
-    ask.add(remoteRequest);    
+    ask.add(remoteRequest);
+    notifyAllocatorThread();
   }
 
   protected void release(ContainerId containerId) {

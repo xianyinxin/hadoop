@@ -289,7 +289,6 @@ public interface YarnScheduler extends EventHandler<SchedulerEvent> {
   public EnumSet<SchedulerResourceTypes> getSchedulingResourceTypes();
 
   /**
-   *
    * Verify whether a submitted application priority is valid as per configured
    * Queue
    *
@@ -306,4 +305,9 @@ public interface YarnScheduler extends EventHandler<SchedulerEvent> {
   public Priority checkAndGetApplicationPriority(Priority priorityFromContext,
       String user, String queueName, ApplicationId applicationId)
       throws YarnException;
+  /**
+   * Get if async scheduling strategy is enabled or not.
+   * @return <code>true</code> if async scheduling is enabled, <code>false</code> if not.
+   */
+  public boolean getAsyncSchedulingEnabled();
 }

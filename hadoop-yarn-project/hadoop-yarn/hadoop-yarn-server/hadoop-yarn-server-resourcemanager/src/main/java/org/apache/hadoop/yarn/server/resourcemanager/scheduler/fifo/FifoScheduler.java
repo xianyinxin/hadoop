@@ -984,6 +984,11 @@ public class FifoScheduler extends
   }
 
   @Override
+  public boolean getAsyncSchedulingEnabled() {
+    return false;
+  }
+
+  @Override
   public QueueMetrics getRootQueueMetrics() {
     return DEFAULT_QUEUE.getMetrics();
   }

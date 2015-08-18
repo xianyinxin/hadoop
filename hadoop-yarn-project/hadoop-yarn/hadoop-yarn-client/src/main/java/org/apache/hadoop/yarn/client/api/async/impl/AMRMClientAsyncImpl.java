@@ -42,6 +42,7 @@ import org.apache.hadoop.yarn.client.api.AMRMClient;
 import org.apache.hadoop.yarn.client.api.AMRMClient.ContainerRequest;
 import org.apache.hadoop.yarn.client.api.async.AMRMClientAsync;
 import org.apache.hadoop.yarn.client.api.impl.AMRMClientImpl;
+import org.apache.hadoop.yarn.conf.YarnConfiguration;
 import org.apache.hadoop.yarn.exceptions.ApplicationAttemptNotFoundException;
 import org.apache.hadoop.yarn.exceptions.YarnException;
 import org.apache.hadoop.yarn.exceptions.YarnRuntimeException;
@@ -70,7 +71,13 @@ extends AMRMClientAsync<T> {
   public AMRMClientAsyncImpl(int intervalMs, CallbackHandler callbackHandler) {
     this(new AMRMClientImpl<T>(), intervalMs, callbackHandler);
   }
-  
+
+  public AMRMClientAsyncImpl(int intervalMs, boolean rmEventBasedHeartbeatEnabled,
+                             int rmEventBasedHeartbeatInterval, CallbackHandler callbackHandler) {
+    this(new AMRMClientImpl<T>(), intervalMs, rmEventBasedHeartbeatEnabled,
+        rmEventBasedHeartbeatInterval, callbackHandler);
+  }
+
   @Private
   @VisibleForTesting
   public AMRMClientAsyncImpl(AMRMClient<T> client, int intervalMs,
@@ -82,9 +89,45 @@ extends AMRMClientAsync<T> {
     keepRunning = true;
     savedException = null;
   }
-    
+
+  public AMRMClientAsyncImpl(AMRMClient<T> client, int intervalMs,
+                             boolean rmEventBasedHeartbeatEnabled, int rmEventBasedHeartbeatInterval,
+                             CallbackHandler callbackHandler) {
+    super(client, intervalMs, rmEventBasedHeartbeatEnabled,
+        rmEventBasedHeartbeatInterval, callbackHandler);
+    heartbeatThread = new HeartbeatThread();
+    handlerThread = new CallbackHandlerThread();
+    responseQueue = new LinkedBlockingQueue<AllocateResponse>();
+    keepRunning = true;
+    savedException = null;
+  }
+
   @Override
   protected void serviceInit(Configuration conf) throws Exception {
+    if (rmEventBasedHeartbeatOverwrite) {
+      // if user doesn't set the event-based heartbeat via API,
+      // try to get the info from local yarn-site.xml
+      rmEventBasedHeartbeatEnabled = conf.getBoolean(
+          YarnConfiguration.YARN_CLIENT_APPLICATION_MASTER_PROTOCOL_EVENT_BASED_HEARTBEAT_ENABLED,
+          YarnConfiguration.DEFAULT_YARN_CLIENT_APPLICATION_MASTER_PROTOCOL_EVENT_BASED_HEARTBEAT_ENABLED);
+
+      configuredRmEventBasedHeartbeatInterval = conf.getInt(
+          YarnConfiguration.YARN_CLIENT_APPLICATION_MASTER_PROTOCOL_EVENT_BASED_HEARTBEAT_INTERVAL,
+          YarnConfiguration.DEFAULT_YARN_CLIENT_APPLICATION_MASTER_PROTOCOL_EVENT_BASED_HEARTBEAT_INTERVAL);
+      rmEventBasedHeartbeatInterval = configuredRmEventBasedHeartbeatInterval;
+    }
+    if (this.rmEventBasedHeartbeatEnabled) {
+      if (this.configuredRmEventBasedHeartbeatInterval >= heartbeatIntervalMs.get()) {
+        this.rmEventBasedHeartbeatEnabled = false;
+        LOG.warn("The event-based heartbeat is disabled because the event-based heartbeat interval "
+            + this.configuredRmEventBasedHeartbeatInterval + " is equal or larger than regular heartbeat interval "
+            + heartbeatIntervalMs.get());
+      } else {
+        LOG.info("Enable and initialize the event-based heart beat to "
+            + this.configuredRmEventBasedHeartbeatInterval + " ms");
+      }
+    }
+
     super.serviceInit(conf);
     client.init(conf);
   }  
@@ -164,6 +207,12 @@ extends AMRMClientAsync<T> {
    */
   public void addContainerRequest(T req) {
     client.addContainerRequest(req);
+    if(rmEventBasedHeartbeatEnabled == true) {
+      heartbeatThread.sendOutofBandHeartbeat();
+      if(LOG.isDebugEnabled()) {
+        LOG.debug("Notify the heart beat thread to send the heart beat");
+      }
+    }
   }
 
   /**
@@ -220,10 +269,49 @@ extends AMRMClientAsync<T> {
   }
   
   private class HeartbeatThread extends Thread {
+    // Instead of using Thread.sleep(), we currently use Object.wait().
+    // The reason is because to wake up a thread in Thread.sleep(),
+    // we have to use Thread.interrupt(). If Thread.interrupt() is called
+    // while AM is sending heart beat or waiting response from RM(client.allocate()),
+    // an exception will be caught and cause AM exits abnormally.
+    private final Object heartbeatMonitor = new Object();
+    private boolean heartbeatSendReq;
     public HeartbeatThread() {
       super("AMRM Heartbeater thread");
+      heartbeatSendReq = false;
     }
-    
+
+    public void sendOutofBandHeartbeat() {
+      synchronized(heartbeatMonitor) {
+        heartbeatSendReq = true;
+        heartbeatMonitor.notify();
+      }
+    }
+    private void waitHeartbeatInterval(long minInterval, long maxInterval) throws InterruptedException{
+      synchronized(heartbeatMonitor) {
+        long start = System.currentTimeMillis();
+        long waitInterval = maxInterval;
+        if(heartbeatSendReq == true) {
+          heartbeatSendReq = false;
+          waitInterval = minInterval;
+        }
+        while(keepRunning && waitInterval > 0) {
+          heartbeatMonitor.wait(waitInterval);
+          if(heartbeatSendReq == true) {
+            long timeElapse = System.currentTimeMillis() - start;
+            heartbeatSendReq = false;
+            if(timeElapse < minInterval) {
+              waitInterval = minInterval - timeElapse;
+            } else {
+              waitInterval = 0;
+            }
+          } else {
+            waitInterval = 0;
+          }
+        }
+      }
+    }
+
     public void run() {
       while (true) {
         AllocateResponse response = null;
@@ -255,10 +343,16 @@ extends AMRMClientAsync<T> {
                 LOG.debug("Interrupted while waiting to put on response queue", ex);
               }
             }
+            updateHeartbeatInterval((int)response.getNextHeartbeatInterval(),
+                response.getIsEventBasedHeartbeatIntervalUpdated());
           }
         }
         try {
-          Thread.sleep(heartbeatIntervalMs.get());
+          if (!rmEventBasedHeartbeatEnabled) {
+            heartbeatMonitor.wait(heartbeatIntervalMs.get());
+          } else {
+            waitHeartbeatInterval(rmEventBasedHeartbeatInterval, heartbeatIntervalMs.get());
+          }
         } catch (InterruptedException ex) {
           LOG.debug("Heartbeater interrupted", ex);
         }
@@ -312,6 +406,18 @@ extends AMRMClientAsync<T> {
           throw new YarnRuntimeException(ex);
         }
       }
+    }
+  }
+
+  private void updateHeartbeatInterval(int nextHeartbeatInterval, boolean flag) {
+    heartbeatIntervalMs.set(nextHeartbeatInterval);
+    if (rmEventBasedHeartbeatEnabled) {
+      if (flag)
+        rmEventBasedHeartbeatInterval = nextHeartbeatInterval;
+      else
+        rmEventBasedHeartbeatInterval =
+            configuredRmEventBasedHeartbeatInterval < nextHeartbeatInterval ?
+                configuredRmEventBasedHeartbeatInterval : nextHeartbeatInterval;
     }
   }
 }

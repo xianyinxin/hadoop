@@ -1862,6 +1862,11 @@ public class CapacityScheduler extends
     return appPriority;
   }
 
+  @Override
+  public boolean getAsyncSchedulingEnabled() {
+    return scheduleAsynchronously;
+  }
+
   private Priority getDefaultPriorityForQueue(String queueName) {
     Queue queue = getQueue(queueName);
     if (null == queue || null == queue.getDefaultApplicationPriority()) {

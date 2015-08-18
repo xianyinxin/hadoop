@@ -99,6 +99,10 @@ extends AbstractService {
   protected final AMRMClient<T> client;
   protected final CallbackHandler handler;
   protected final AtomicInteger heartbeatIntervalMs = new AtomicInteger();
+  protected final boolean rmEventBasedHeartbeatOverwrite;
+  protected boolean rmEventBasedHeartbeatEnabled;
+  protected int rmEventBasedHeartbeatInterval;
+  protected int configuredRmEventBasedHeartbeatInterval;
 
   public static <T extends ContainerRequest> AMRMClientAsync<T>
       createAMRMClientAsync(int intervalMs, CallbackHandler callbackHandler) {
@@ -110,7 +114,14 @@ extends AbstractService {
           CallbackHandler callbackHandler) {
     return new AMRMClientAsyncImpl<T>(client, intervalMs, callbackHandler);
   }
-  
+
+  public static <T extends ContainerRequest> AMRMClientAsync<T>
+  createAMRMClientAsync(int intervalMs, CallbackHandler callbackHandler,
+                        boolean rmEventBasedHeartbeatEnabled, int rmEventBasedHeartbeatInterval){
+    return new AMRMClientAsyncImpl<T>(intervalMs,
+        rmEventBasedHeartbeatEnabled, rmEventBasedHeartbeatInterval, callbackHandler);
+  }
+
   protected AMRMClientAsync(int intervalMs, CallbackHandler callbackHandler) {
     this(new AMRMClientImpl<T>(), intervalMs, callbackHandler);
   }
@@ -123,8 +134,23 @@ extends AbstractService {
     this.client = client;
     this.heartbeatIntervalMs.set(intervalMs);
     this.handler = callbackHandler;
+    this.rmEventBasedHeartbeatEnabled = false;
+    this.rmEventBasedHeartbeatInterval = 0;
+    this.rmEventBasedHeartbeatOverwrite = true;
   }
-    
+
+  protected AMRMClientAsync(AMRMClient<T> client, int intervalMs,
+                            boolean rmEventBasedHeartbeatEnabled, int rmEventBasedHeartbeatInterval,
+                            CallbackHandler callbackHandler) {
+    super(AMRMClientAsync.class.getName());
+    this.client = client;
+    this.heartbeatIntervalMs.set(intervalMs);
+    this.handler = callbackHandler;
+    this.rmEventBasedHeartbeatEnabled = rmEventBasedHeartbeatEnabled;
+    this.rmEventBasedHeartbeatInterval = rmEventBasedHeartbeatInterval;
+    this.rmEventBasedHeartbeatOverwrite = false;
+  }
+
   public void setHeartbeatInterval(int interval) {
     heartbeatIntervalMs.set(interval);
   }

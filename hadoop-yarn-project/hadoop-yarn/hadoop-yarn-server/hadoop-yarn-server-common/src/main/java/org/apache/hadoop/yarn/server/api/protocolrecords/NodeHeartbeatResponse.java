@@ -54,8 +54,11 @@ public interface NodeHeartbeatResponse {
   
   void addAllApplicationsToCleanup(List<ApplicationId> applications);
 
-  long getNextHeartBeatInterval();
-  void setNextHeartBeatInterval(long nextHeartBeatInterval);
+  long getNextHeartbeatInterval();
+  void setNextHeartbeatInterval(long nextHeartBeatInterval);
+
+  boolean getIsEventBasedHeartbeatIntervalUpdated();
+  void setIsEventBasedHeartbeatIntervalUpdated(boolean isEventBasedHeartbeatIntervalUpdated);
   
   String getDiagnosticsMessage();
 

@@ -151,6 +151,33 @@ public abstract class AllocateResponse {
   public abstract void setResponseId(int responseId);
 
   /**
+   * Get the <em>next heartbeat interval</em>.
+   * @return <em>next heartbeat interval</em>
+   */
+  @Public
+  @Stable
+  public abstract long getNextHeartbeatInterval();
+
+  /**
+   * Set the <em>next heartbeat interval</em>.
+   * @param nextHeartbeatInterval
+   */
+  @Private
+  @Unstable
+  public abstract void setNextHeartbeatInterval(long nextHeartbeatInterval);
+
+  /**
+   * Get if the <em>min heartbeat interval</em> is updated.
+   */
+  public abstract boolean getIsEventBasedHeartbeatIntervalUpdated();
+
+  /**
+   * Set if the <em>min heartbeat interval</em> is updated.
+   * @param isEventBasedHeartbeatIntervalUpdated
+   */
+  public abstract void setIsEventBasedHeartbeatIntervalUpdated(boolean isEventBasedHeartbeatIntervalUpdated);
+
+  /**
    * Get the list of <em>newly allocated</em> <code>Container</code> by the
    * <code>ResourceManager</code>.
    * @return list of <em>newly allocated</em> <code>Container</code>
