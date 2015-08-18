@@ -65,6 +65,8 @@ import org.apache.hadoop.yarn.server.resourcemanager.rmcontainer.RMContainerImpl
 import org.apache.hadoop.yarn.server.resourcemanager.rmcontainer.RMContainerRecoverEvent;
 import org.apache.hadoop.yarn.server.resourcemanager.rmnode.RMNode;
 import org.apache.hadoop.yarn.server.resourcemanager.rmnode.RMNodeCleanContainerEvent;
+import org.apache.hadoop.yarn.util.Clock;
+import org.apache.hadoop.yarn.util.SystemClock;
 import org.apache.hadoop.yarn.util.resource.Resources;
 
 import com.google.common.annotations.VisibleForTesting;
@@ -98,7 +100,9 @@ public abstract class AbstractYarnScheduler
   private long configuredMaximumAllocationWaitTime;
 
   protected RMContext rmContext;
-  
+
+  private volatile Clock clock;
+
   /*
    * All schedulers which are inheriting AbstractYarnScheduler should use
    * concurrent version of 'applications' map.
@@ -121,6 +125,15 @@ public abstract class AbstractYarnScheduler
     ReentrantReadWriteLock lock = new ReentrantReadWriteLock();
     this.maxAllocReadLock = lock.readLock();
     this.maxAllocWriteLock = lock.writeLock();
+    clock = new SystemClock();
+  }
+
+  public Clock getClock() {
+    return clock;
+  }
+
+  protected void setClock(Clock clock) {
+    this.clock = clock;
   }
 
   @Override

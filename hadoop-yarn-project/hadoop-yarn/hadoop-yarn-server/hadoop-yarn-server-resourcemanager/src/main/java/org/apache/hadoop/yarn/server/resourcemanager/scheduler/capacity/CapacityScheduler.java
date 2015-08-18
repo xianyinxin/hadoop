@@ -46,7 +46,6 @@ import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.security.AccessControlException;
 import org.apache.hadoop.security.Groups;
 import org.apache.hadoop.security.UserGroupInformation;
-import org.apache.hadoop.util.Time;
 import org.apache.hadoop.yarn.api.records.ApplicationAttemptId;
 import org.apache.hadoop.yarn.api.records.ApplicationId;
 import org.apache.hadoop.yarn.api.records.Container;
@@ -97,6 +96,7 @@ import org.apache.hadoop.yarn.server.resourcemanager.scheduler.ResourceLimits;
 import org.apache.hadoop.yarn.server.resourcemanager.scheduler.SchedulerApplication;
 import org.apache.hadoop.yarn.server.resourcemanager.scheduler.SchedulerDynamicEditException;
 import org.apache.hadoop.yarn.server.resourcemanager.scheduler.SchedulerHealth;
+import org.apache.hadoop.yarn.server.resourcemanager.scheduler.SchedulerMetrics;
 import org.apache.hadoop.yarn.server.resourcemanager.scheduler.SchedulerUtils;
 import org.apache.hadoop.yarn.server.resourcemanager.scheduler.capacity.CapacitySchedulerConfiguration.QueueMapping;
 import org.apache.hadoop.yarn.server.resourcemanager.scheduler.capacity.CapacitySchedulerConfiguration.QueueMapping.MappingType;
@@ -356,6 +356,7 @@ public class CapacityScheduler extends
     Configuration configuration = new Configuration(conf);
     super.serviceInit(conf);
     initScheduler(configuration);
+    SchedulerMetrics.initMetrics(this);
   }
 
   @Override
@@ -896,63 +897,66 @@ public class CapacityScheduler extends
   public Allocation allocate(ApplicationAttemptId applicationAttemptId,
       List<ResourceRequest> ask, List<ContainerId> release, 
       List<String> blacklistAdditions, List<String> blacklistRemovals) {
-
-    FiCaSchedulerApp application = getApplicationAttempt(applicationAttemptId);
-    if (application == null) {
-      return EMPTY_ALLOCATION;
-    }
-    
-    // Sanity check
-    SchedulerUtils.normalizeRequests(
-        ask, getResourceCalculator(), getClusterResource(),
-        getMinimumResourceCapability(), getMaximumResourceCapability());
-
-    // Release containers
-    releaseContainers(release, application);
-
-    Allocation allocation;
-
-    LeafQueue updateDemandForQueue = null;
-
-    synchronized (application) {
-
-      // make sure we aren't stopping/removing the application
-      // when the allocate comes in
-      if (application.isStopped()) {
+    long start = getClock().getTime();
+    try {
+      FiCaSchedulerApp application = getApplicationAttempt(applicationAttemptId);
+      if (application == null) {
         return EMPTY_ALLOCATION;
       }
-
-      if (!ask.isEmpty()) {
-
-        if(LOG.isDebugEnabled()) {
-          LOG.debug("allocate: pre-update " + applicationAttemptId +
-              " ask size =" + ask.size());
-          application.showRequests();
+      
+      // Sanity check
+      SchedulerUtils.normalizeRequests(
+          ask, getResourceCalculator(), getClusterResource(),
+          getMinimumResourceCapability(), getMaximumResourceCapability());
+      
+      // Release containers
+      releaseContainers(release, application);
+      
+      Allocation allocation;
+      
+      LeafQueue updateDemandForQueue = null;
+      
+      synchronized (application) {
+      
+        // make sure we aren't stopping/removing the application
+        // when the allocate comes in
+        if (application.isStopped()) {
+          return EMPTY_ALLOCATION;
         }
-
-        // Update application requests
-        if (application.updateResourceRequests(ask)) {
-          updateDemandForQueue = (LeafQueue) application.getQueue();
+      
+        if (!ask.isEmpty()) {
+      
+          if(LOG.isDebugEnabled()) {
+            LOG.debug("allocate: pre-update " + applicationAttemptId +
+                " ask size =" + ask.size());
+            application.showRequests();
+          }
+      
+          // Update application requests
+          if (application.updateResourceRequests(ask)) {
+            updateDemandForQueue = (LeafQueue) application.getQueue();
+          }
+      
+          if(LOG.isDebugEnabled()) {
+            LOG.debug("allocate: post-update");
+            application.showRequests();
+          }
         }
-
-        if(LOG.isDebugEnabled()) {
-          LOG.debug("allocate: post-update");
-          application.showRequests();
-        }
+      
+        application.updateBlacklist(blacklistAdditions, blacklistRemovals);
+      
+        allocation = application.getAllocation(getResourceCalculator(),
+                     clusterResource, getMinimumResourceCapability());
       }
-
-      application.updateBlacklist(blacklistAdditions, blacklistRemovals);
-
-      allocation = application.getAllocation(getResourceCalculator(),
-                   clusterResource, getMinimumResourceCapability());
+      
+      if (updateDemandForQueue != null) {
+        updateDemandForQueue.getOrderingPolicy().demandUpdated(application);
+      }
+      
+      return allocation;
+    } finally {
+      SchedulerMetrics.getMetrics().updateAppAllocateDurationStat(getClock().getTime() - start);
     }
-
-    if (updateDemandForQueue != null) {
-      updateDemandForQueue.getOrderingPolicy().demandUpdated(application);
-    }
-
-    return allocation;
-
   }
 
   @Override
@@ -1122,33 +1126,66 @@ public class CapacityScheduler extends
  }
 
   private synchronized void allocateContainersToNode(FiCaSchedulerNode node) {
-    if (rmContext.isWorkPreservingRecoveryEnabled()
-        && !rmContext.isSchedulerReadyForAllocatingContainers()) {
-      return;
-    }
-    // reset allocation and reservation stats before we start doing any work
-    updateSchedulerHealth(lastNodeUpdateTime, node,
-      new CSAssignment(Resources.none(), NodeType.NODE_LOCAL));
-
-    CSAssignment assignment;
-
-    // Assign new containers...
-    // 1. Check for reserved applications
-    // 2. Schedule if there are no reservations
-
-    RMContainer reservedContainer = node.getReservedContainer();
-    if (reservedContainer != null) {
-      FiCaSchedulerApp reservedApplication =
-          getCurrentAttemptForContainer(reservedContainer.getContainerId());
-
-      // Try to fulfill the reservation
-      LOG.info("Trying to fulfill reservation for application "
-          + reservedApplication.getApplicationId() + " on node: "
-          + node.getNodeID());
-
-      LeafQueue queue = ((LeafQueue) reservedApplication.getQueue());
-      assignment =
-          queue.assignContainers(
+    long start = getClock().getTime();
+    try {
+      if (rmContext.isWorkPreservingRecoveryEnabled()
+          && !rmContext.isSchedulerReadyForAllocatingContainers()) {
+        return;
+      }
+      // reset allocation and reservation stats before we start doing any work
+      updateSchedulerHealth(lastNodeUpdateTime, node,
+        new CSAssignment(Resources.none(), NodeType.NODE_LOCAL));
+      
+      CSAssignment assignment;
+      
+      // Assign new containers...
+      // 1. Check for reserved applications
+      // 2. Schedule if there are no reservations
+      
+      RMContainer reservedContainer = node.getReservedContainer();
+      if (reservedContainer != null) {
+        FiCaSchedulerApp reservedApplication =
+            getCurrentAttemptForContainer(reservedContainer.getContainerId());
+      
+        // Try to fulfill the reservation
+        LOG.info("Trying to fulfill reservation for application "
+            + reservedApplication.getApplicationId() + " on node: "
+            + node.getNodeID());
+      
+        LeafQueue queue = ((LeafQueue) reservedApplication.getQueue());
+        assignment =
+            queue.assignContainers(
+                clusterResource,
+                node,
+                // TODO, now we only consider limits for parent for non-labeled
+                // resources, should consider labeled resources as well.
+                new ResourceLimits(labelManager.getResourceByLabel(
+                    RMNodeLabelsManager.NO_LABEL, clusterResource)),
+                SchedulingMode.RESPECT_PARTITION_EXCLUSIVITY);
+        if (assignment.isFulfilledReservation()) {
+          CSAssignment tmp =
+              new CSAssignment(reservedContainer.getReservedResource(),
+                  assignment.getType());
+          Resources.addTo(assignment.getAssignmentInformation().getAllocated(),
+              reservedContainer.getReservedResource());
+          tmp.getAssignmentInformation().addAllocationDetails(
+              reservedContainer.getContainerId(), queue.getQueuePath());
+          tmp.getAssignmentInformation().incrAllocations();
+          updateSchedulerHealth(lastNodeUpdateTime, node, tmp);
+          schedulerHealth.updateSchedulerFulfilledReservationCounts(1);
+        }
+      }
+      
+      // Try to schedule more if there are no reservations to fulfill
+      if (node.getReservedContainer() == null) {
+        if (calculator.computeAvailableContainers(node.getAvailableResource(),
+          minimumAllocation) > 0) {
+          if (LOG.isDebugEnabled()) {
+            LOG.debug("Trying to schedule on node: " + node.getNodeName() +
+                ", available: " + node.getAvailableResource());
+          }
+      
+          assignment = root.assignContainers(
               clusterResource,
               node,
               // TODO, now we only consider limits for parent for non-labeled
@@ -1156,78 +1193,50 @@ public class CapacityScheduler extends
               new ResourceLimits(labelManager.getResourceByLabel(
                   RMNodeLabelsManager.NO_LABEL, clusterResource)),
               SchedulingMode.RESPECT_PARTITION_EXCLUSIVITY);
-      if (assignment.isFulfilledReservation()) {
-        CSAssignment tmp =
-            new CSAssignment(reservedContainer.getReservedResource(),
-                assignment.getType());
-        Resources.addTo(assignment.getAssignmentInformation().getAllocated(),
-            reservedContainer.getReservedResource());
-        tmp.getAssignmentInformation().addAllocationDetails(
-            reservedContainer.getContainerId(), queue.getQueuePath());
-        tmp.getAssignmentInformation().incrAllocations();
-        updateSchedulerHealth(lastNodeUpdateTime, node, tmp);
-        schedulerHealth.updateSchedulerFulfilledReservationCounts(1);
-      }
-    }
-
-    // Try to schedule more if there are no reservations to fulfill
-    if (node.getReservedContainer() == null) {
-      if (calculator.computeAvailableContainers(node.getAvailableResource(),
-        minimumAllocation) > 0) {
-        if (LOG.isDebugEnabled()) {
-          LOG.debug("Trying to schedule on node: " + node.getNodeName() +
-              ", available: " + node.getAvailableResource());
-        }
-
-        assignment = root.assignContainers(
-            clusterResource,
-            node,
-            // TODO, now we only consider limits for parent for non-labeled
-            // resources, should consider labeled resources as well.
-            new ResourceLimits(labelManager.getResourceByLabel(
-                RMNodeLabelsManager.NO_LABEL, clusterResource)),
-            SchedulingMode.RESPECT_PARTITION_EXCLUSIVITY);
-        if (Resources.greaterThan(calculator, clusterResource,
-            assignment.getResource(), Resources.none())) {
-          updateSchedulerHealth(lastNodeUpdateTime, node, assignment);
-          return;
-        }
-        
-        // Only do non-exclusive allocation when node has node-labels.
-        if (StringUtils.equals(node.getPartition(),
-            RMNodeLabelsManager.NO_LABEL)) {
-          return;
-        }
-        
-        // Only do non-exclusive allocation when the node-label supports that
-        try {
-          if (rmContext.getNodeLabelManager().isExclusiveNodeLabel(
-              node.getPartition())) {
+          if (Resources.greaterThan(calculator, clusterResource,
+              assignment.getResource(), Resources.none())) {
+            updateSchedulerHealth(lastNodeUpdateTime, node, assignment);
             return;
           }
-        } catch (IOException e) {
-          LOG.warn("Exception when trying to get exclusivity of node label="
-              + node.getPartition(), e);
-          return;
+          
+          // Only do non-exclusive allocation when node has node-labels.
+          if (StringUtils.equals(node.getPartition(),
+              RMNodeLabelsManager.NO_LABEL)) {
+            return;
+          }
+          
+          // Only do non-exclusive allocation when the node-label supports that
+          try {
+            if (rmContext.getNodeLabelManager().isExclusiveNodeLabel(
+                node.getPartition())) {
+              return;
+            }
+          } catch (IOException e) {
+            LOG.warn("Exception when trying to get exclusivity of node label="
+                + node.getPartition(), e);
+            return;
+          }
+          
+          // Try to use NON_EXCLUSIVE
+          assignment = root.assignContainers(
+              clusterResource,
+              node,
+              // TODO, now we only consider limits for parent for non-labeled
+              // resources, should consider labeled resources as well.
+              new ResourceLimits(labelManager.getResourceByLabel(
+                  RMNodeLabelsManager.NO_LABEL, clusterResource)),
+              SchedulingMode.IGNORE_PARTITION_EXCLUSIVITY);
+          updateSchedulerHealth(lastNodeUpdateTime, node, assignment);
         }
-        
-        // Try to use NON_EXCLUSIVE
-        assignment = root.assignContainers(
-            clusterResource,
-            node,
-            // TODO, now we only consider limits for parent for non-labeled
-            // resources, should consider labeled resources as well.
-            new ResourceLimits(labelManager.getResourceByLabel(
-                RMNodeLabelsManager.NO_LABEL, clusterResource)),
-            SchedulingMode.IGNORE_PARTITION_EXCLUSIVITY);
-        updateSchedulerHealth(lastNodeUpdateTime, node, assignment);
+      } else {
+        LOG.info("Skipping scheduling since node "
+            + node.getNodeID()
+            + " is reserved by application "
+            + node.getReservedContainer().getContainerId()
+                .getApplicationAttemptId());
       }
-    } else {
-      LOG.info("Skipping scheduling since node "
-          + node.getNodeID()
-          + " is reserved by application "
-          + node.getReservedContainer().getContainerId()
-              .getApplicationAttemptId());
+    } finally {
+      SchedulerMetrics.getMetrics().updateSchedulingDurationStat(getClock().getTime() - start);
     }
   }
 
@@ -1273,11 +1282,13 @@ public class CapacityScheduler extends
     {
       NodeUpdateSchedulerEvent nodeUpdatedEvent = (NodeUpdateSchedulerEvent)event;
       RMNode node = nodeUpdatedEvent.getRMNode();
-      setLastNodeUpdateTime(Time.now());
+      setLastNodeUpdateTime(getClock().getTime());
+      long start = getClock().getTime();
       nodeUpdate(node);
       if (!scheduleAsynchronously) {
         allocateContainersToNode(getNode(node.getNodeID()));
       }
+      SchedulerMetrics.getMetrics().updateNodeUpdateDurationStat(getClock().getTime() - start);
     }
     break;
     case APP_ADDED:
@@ -1472,7 +1483,7 @@ public class CapacityScheduler extends
         rmContainer, containerStatus, event, null, true);
 
     if (containerStatus.getExitStatus() == ContainerExitStatus.PREEMPTED) {
-      schedulerHealth.updatePreemption(Time.now(), container.getNodeId(),
+      schedulerHealth.updatePreemption(getClock().getTime(), container.getNodeId(),
         container.getId(), queue.getQueuePath());
       schedulerHealth.updateSchedulerPreemptionCounts(1);
     } else {
@@ -1535,8 +1546,8 @@ public class CapacityScheduler extends
       LOG.debug("KILL_CONTAINER: container" + cont.toString());
     }
     completedContainer(cont, SchedulerUtils.createPreemptedContainerStatus(
-      cont.getContainerId(), SchedulerUtils.PREEMPTED_CONTAINER),
-      RMContainerEventType.KILL);
+            cont.getContainerId(), SchedulerUtils.PREEMPTED_CONTAINER),
+        RMContainerEventType.KILL);
   }
 
   @Override
@@ -1772,7 +1783,7 @@ public class CapacityScheduler extends
     }
     return EnumSet.of(SchedulerResourceTypes.MEMORY, SchedulerResourceTypes.CPU);
   }
-  
+
   @Override
   public Resource getMaximumResourceCapability(String queueName) {
     CSQueue queue = getQueue(queueName);

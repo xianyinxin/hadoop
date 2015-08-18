@@ -77,6 +77,7 @@ import org.apache.hadoop.yarn.server.resourcemanager.scheduler.SchedulerAppUtils
 import org.apache.hadoop.yarn.server.resourcemanager.scheduler.SchedulerApplication;
 import org.apache.hadoop.yarn.server.resourcemanager.scheduler.SchedulerApplicationAttempt;
 import org.apache.hadoop.yarn.server.resourcemanager.scheduler.SchedulerApplicationAttempt.ContainersAndNMTokensAllocation;
+import org.apache.hadoop.yarn.server.resourcemanager.scheduler.SchedulerMetrics;
 import org.apache.hadoop.yarn.server.resourcemanager.scheduler.SchedulerUtils;
 import org.apache.hadoop.yarn.server.resourcemanager.scheduler.common.fica.FiCaSchedulerApp;
 import org.apache.hadoop.yarn.server.resourcemanager.scheduler.common.fica.FiCaSchedulerNode;
@@ -249,6 +250,7 @@ public class FifoScheduler extends
   @Override
   public void serviceInit(Configuration conf) throws Exception {
     initScheduler(conf);
+    SchedulerMetrics.initMetrics(this);
     super.serviceInit(conf);
   }
 
@@ -313,56 +315,61 @@ public class FifoScheduler extends
   public Allocation allocate(
       ApplicationAttemptId applicationAttemptId, List<ResourceRequest> ask,
       List<ContainerId> release, List<String> blacklistAdditions, List<String> blacklistRemovals) {
-    FiCaSchedulerApp application = getApplicationAttempt(applicationAttemptId);
-    if (application == null) {
-      LOG.error("Calling allocate on removed " +
-          "or non existant application " + applicationAttemptId);
-      return EMPTY_ALLOCATION;
-    }
-
-    // Sanity check
-    SchedulerUtils.normalizeRequests(ask, resourceCalculator, 
-        clusterResource, minimumAllocation, getMaximumResourceCapability());
-
-    // Release containers
-    releaseContainers(release, application);
-
-    synchronized (application) {
-
-      // make sure we aren't stopping/removing the application
-      // when the allocate comes in
-      if (application.isStopped()) {
-        LOG.info("Calling allocate on a stopped " +
-            "application " + applicationAttemptId);
+    long start = getClock().getTime();
+    try {
+      FiCaSchedulerApp application = getApplicationAttempt(applicationAttemptId);
+      if (application == null) {
+        LOG.error("Calling allocate on removed " +
+            "or non existant application " + applicationAttemptId);
         return EMPTY_ALLOCATION;
       }
 
-      if (!ask.isEmpty()) {
-        LOG.debug("allocate: pre-update" +
-            " applicationId=" + applicationAttemptId + 
-            " application=" + application);
-        application.showRequests();
+      // Sanity check
+      SchedulerUtils.normalizeRequests(ask, resourceCalculator,
+          clusterResource, minimumAllocation, getMaximumResourceCapability());
 
-        // Update application requests
-        application.updateResourceRequests(ask);
+      // Release containers
+      releaseContainers(release, application);
 
-        LOG.debug("allocate: post-update" +
-            " applicationId=" + applicationAttemptId + 
-            " application=" + application);
-        application.showRequests();
+      synchronized (application) {
 
-        LOG.debug("allocate:" +
-            " applicationId=" + applicationAttemptId + 
-            " #ask=" + ask.size());
+        // make sure we aren't stopping/removing the application
+        // when the allocate comes in
+        if (application.isStopped()) {
+          LOG.info("Calling allocate on a stopped " +
+              "application " + applicationAttemptId);
+          return EMPTY_ALLOCATION;
+        }
+
+        if (!ask.isEmpty()) {
+          LOG.debug("allocate: pre-update" +
+              " applicationId=" + applicationAttemptId +
+              " application=" + application);
+          application.showRequests();
+
+          // Update application requests
+          application.updateResourceRequests(ask);
+
+          LOG.debug("allocate: post-update" +
+              " applicationId=" + applicationAttemptId +
+              " application=" + application);
+          application.showRequests();
+
+          LOG.debug("allocate:" +
+              " applicationId=" + applicationAttemptId +
+              " #ask=" + ask.size());
+        }
+
+        application.updateBlacklist(blacklistAdditions, blacklistRemovals);
+        ContainersAndNMTokensAllocation allocation =
+            application.pullNewlyAllocatedContainersAndNMTokens();
+        Resource headroom = application.getHeadroom();
+        application.setApplicationHeadroomForMetrics(headroom);
+        return new Allocation(allocation.getContainerList(), headroom, null,
+            null, null, allocation.getNMTokenList());
       }
-
-      application.updateBlacklist(blacklistAdditions, blacklistRemovals);
-      ContainersAndNMTokensAllocation allocation =
-          application.pullNewlyAllocatedContainersAndNMTokens();
-      Resource headroom = application.getHeadroom();
-      application.setApplicationHeadroomForMetrics(headroom);
-      return new Allocation(allocation.getContainerList(), headroom, null,
-          null, null, allocation.getNMTokenList());
+    } finally {
+      SchedulerMetrics.getMetrics().updateAppAllocateDurationStat(getClock().getTime() - start);
     }
   }
 
@@ -404,7 +411,7 @@ public class FifoScheduler extends
 
     if (transferStateFromPreviousAttempt) {
       schedulerApp.transferStateFromPreviousAttempt(application
-        .getCurrentAppAttempt());
+          .getCurrentAppAttempt());
     }
     application.setCurrentAppAttempt(schedulerApp);
 
@@ -476,6 +483,7 @@ public class FifoScheduler extends
    * @param node node on which resources are available to be allocated
    */
   private void assignContainers(FiCaSchedulerNode node) {
+    long start = getClock().getTime();
     LOG.debug("assignContainers:" +
         " node=" + node.getRMNode().getNodeAddress() + 
         " #applications=" + applications.size());
@@ -532,6 +540,7 @@ public class FifoScheduler extends
       }
       updateAppHeadRoom(attempt);
     }
+    SchedulerMetrics.getMetrics().updateSchedulingDurationStat(getClock().getTime() - start);
   }
 
   private int getMaxAllocatableContainers(FiCaSchedulerApp application,
@@ -713,46 +722,51 @@ public class FifoScheduler extends
   }
 
   private synchronized void nodeUpdate(RMNode rmNode) {
-    FiCaSchedulerNode node = getNode(rmNode.getNodeID());
-    
-    List<UpdatedContainerInfo> containerInfoList = rmNode.pullContainerUpdates();
-    List<ContainerStatus> newlyLaunchedContainers = new ArrayList<ContainerStatus>();
-    List<ContainerStatus> completedContainers = new ArrayList<ContainerStatus>();
-    for(UpdatedContainerInfo containerInfo : containerInfoList) {
-      newlyLaunchedContainers.addAll(containerInfo.getNewlyLaunchedContainers());
-      completedContainers.addAll(containerInfo.getCompletedContainers());
+    long start = getClock().getTime();
+    try {
+      FiCaSchedulerNode node = getNode(rmNode.getNodeID());
+
+      List<UpdatedContainerInfo> containerInfoList = rmNode.pullContainerUpdates();
+      List<ContainerStatus> newlyLaunchedContainers = new ArrayList<ContainerStatus>();
+      List<ContainerStatus> completedContainers = new ArrayList<ContainerStatus>();
+      for(UpdatedContainerInfo containerInfo : containerInfoList) {
+        newlyLaunchedContainers.addAll(containerInfo.getNewlyLaunchedContainers());
+        completedContainers.addAll(containerInfo.getCompletedContainers());
+      }
+      // Processing the newly launched containers
+      for (ContainerStatus launchedContainer : newlyLaunchedContainers) {
+        containerLaunchedOnNode(launchedContainer.getContainerId(), node);
+      }
+
+      // Process completed containers
+      for (ContainerStatus completedContainer : completedContainers) {
+        ContainerId containerId = completedContainer.getContainerId();
+        LOG.debug("Container FINISHED: " + containerId);
+        completedContainer(getRMContainer(containerId),
+            completedContainer, RMContainerEventType.FINISHED);
+      }
+
+
+      if (rmContext.isWorkPreservingRecoveryEnabled()
+          && !rmContext.isSchedulerReadyForAllocatingContainers()) {
+        return;
+      }
+
+      if (Resources.greaterThanOrEqual(resourceCalculator, clusterResource,
+          node.getAvailableResource(),minimumAllocation)) {
+        LOG.debug("Node heartbeat " + rmNode.getNodeID() +
+            " available resource = " + node.getAvailableResource());
+
+        assignContainers(node);
+
+        LOG.debug("Node after allocation " + rmNode.getNodeID() + " resource = "
+            + node.getAvailableResource());
+      }
+
+      updateAvailableResourcesMetrics();
+    } finally {
+      SchedulerMetrics.getMetrics().updateNodeUpdateDurationStat(getClock().getTime() - start);
     }
-    // Processing the newly launched containers
-    for (ContainerStatus launchedContainer : newlyLaunchedContainers) {
-      containerLaunchedOnNode(launchedContainer.getContainerId(), node);
-    }
-
-    // Process completed containers
-    for (ContainerStatus completedContainer : completedContainers) {
-      ContainerId containerId = completedContainer.getContainerId();
-      LOG.debug("Container FINISHED: " + containerId);
-      completedContainer(getRMContainer(containerId), 
-          completedContainer, RMContainerEventType.FINISHED);
-    }
-
-
-    if (rmContext.isWorkPreservingRecoveryEnabled()
-        && !rmContext.isSchedulerReadyForAllocatingContainers()) {
-      return;
-    }
-
-    if (Resources.greaterThanOrEqual(resourceCalculator, clusterResource,
-            node.getAvailableResource(),minimumAllocation)) {
-      LOG.debug("Node heartbeat " + rmNode.getNodeID() + 
-          " available resource = " + node.getAvailableResource());
-
-      assignContainers(node);
-
-      LOG.debug("Node after allocation " + rmNode.getNodeID() + " resource = "
-          + node.getAvailableResource());
-    }
-
-    updateAvailableResourcesMetrics();
   }
 
   private void increaseUsedResources(RMContainer rmContainer) {
@@ -761,7 +775,7 @@ public class FifoScheduler extends
 
   private void updateAppHeadRoom(SchedulerApplicationAttempt schedulerAttempt) {
     schedulerAttempt.setHeadroom(Resources.subtract(clusterResource,
-      usedResource));
+        usedResource));
   }
 
   private void updateAvailableResourcesMetrics() {
@@ -903,9 +917,9 @@ public class FifoScheduler extends
     // Update total usage
     Resources.subtractFrom(usedResource, container.getResource());
 
-    LOG.info("Application attempt " + application.getApplicationAttemptId() + 
+    LOG.info("Application attempt " + application.getApplicationAttemptId() +
         " released container " + container.getId() +
-        " on node: " + node + 
+        " on node: " + node +
         " with event: " + event);
      
   }

@@ -19,7 +19,14 @@
 package org.apache.hadoop.yarn.server.resourcemanager.scheduler.fair;
 
 import java.io.IOException;
-import java.util.*;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.Comparator;
+import java.util.EnumSet;
+import java.util.HashSet;
+import java.util.Iterator;
+import java.util.List;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 
 import org.apache.commons.logging.Log;
@@ -69,6 +76,7 @@ import org.apache.hadoop.yarn.server.resourcemanager.scheduler.Allocation;
 import org.apache.hadoop.yarn.server.resourcemanager.scheduler.QueueMetrics;
 import org.apache.hadoop.yarn.server.resourcemanager.scheduler.SchedulerApplication;
 import org.apache.hadoop.yarn.server.resourcemanager.scheduler.SchedulerApplicationAttempt.ContainersAndNMTokensAllocation;
+import org.apache.hadoop.yarn.server.resourcemanager.scheduler.SchedulerMetrics;
 import org.apache.hadoop.yarn.server.resourcemanager.scheduler.SchedulerUtils;
 import org.apache.hadoop.yarn.server.resourcemanager.scheduler.common.QueueEntitlement;
 import org.apache.hadoop.yarn.server.resourcemanager.scheduler.event.AppAddedSchedulerEvent;
@@ -84,7 +92,6 @@ import org.apache.hadoop.yarn.server.resourcemanager.scheduler.event.NodeUpdateS
 import org.apache.hadoop.yarn.server.resourcemanager.scheduler.event.SchedulerEvent;
 import org.apache.hadoop.yarn.server.resourcemanager.security.RMContainerTokenSecretManager;
 import org.apache.hadoop.yarn.util.Clock;
-import org.apache.hadoop.yarn.util.SystemClock;
 import org.apache.hadoop.yarn.util.resource.DefaultResourceCalculator;
 import org.apache.hadoop.yarn.util.resource.DominantResourceCalculator;
 import org.apache.hadoop.yarn.util.resource.ResourceCalculator;
@@ -121,7 +128,6 @@ public class FairScheduler extends
 
   private Resource incrAllocation;
   private QueueManager queueMgr;
-  private volatile Clock clock;
   private boolean usePortForNodeName;
 
   private static final Log LOG = LogFactory.getLog(FairScheduler.class);
@@ -197,7 +203,6 @@ public class FairScheduler extends
   
   public FairScheduler() {
     super(FairScheduler.class.getName());
-    clock = new SystemClock();
     allocsLoader = new AllocationFileLoaderService();
     queueMgr = new QueueManager(this);
     maxRunningEnforcer = new MaxRunningAppsEnforcer(this);
@@ -346,7 +351,7 @@ public class FairScheduler extends
    * threshold for each type of task.
    */
   private void updateStarvationStats() {
-    lastPreemptionUpdateTime = clock.getTime();
+    lastPreemptionUpdateTime = getClock().getTime();
     for (FSLeafQueue sched : queueMgr.getLeafQueues()) {
       sched.updateStarvationStats();
     }
@@ -570,13 +575,10 @@ public class FairScheduler extends
     return continuousSchedulingSleepMs;
   }
 
-  public Clock getClock() {
-    return clock;
-  }
-
+  @Override
   @VisibleForTesting
-  void setClock(Clock clock) {
-    this.clock = clock;
+  protected void setClock(Clock clock) {
+    super.setClock(clock);
   }
 
   public FairSchedulerEventLog getEventLog() {
@@ -905,69 +907,73 @@ public class FairScheduler extends
   public Allocation allocate(ApplicationAttemptId appAttemptId,
       List<ResourceRequest> ask, List<ContainerId> release,
       List<String> blacklistAdditions, List<String> blacklistRemovals) {
+    long start = getClock().getTime();
+    try {
+      // Make sure this application exists
+      FSAppAttempt application = getSchedulerApp(appAttemptId);
+      if (application == null) {
+        LOG.info("Calling allocate on removed " +
+            "or non existant application " + appAttemptId);
+        return EMPTY_ALLOCATION;
+      }
 
-    // Make sure this application exists
-    FSAppAttempt application = getSchedulerApp(appAttemptId);
-    if (application == null) {
-      LOG.info("Calling allocate on removed " +
-          "or non existant application " + appAttemptId);
-      return EMPTY_ALLOCATION;
-    }
+      // Sanity check
+      SchedulerUtils.normalizeRequests(ask, DOMINANT_RESOURCE_CALCULATOR,
+          clusterResource, minimumAllocation, getMaximumResourceCapability(),
+          incrAllocation);
 
-    // Sanity check
-    SchedulerUtils.normalizeRequests(ask, DOMINANT_RESOURCE_CALCULATOR,
-        clusterResource, minimumAllocation, getMaximumResourceCapability(),
-        incrAllocation);
+      // Record container allocation start time
+      application.recordContainerRequestTime(getClock().getTime());
 
-    // Record container allocation start time
-    application.recordContainerRequestTime(getClock().getTime());
+      // Release containers
+      releaseContainers(release, application);
 
-    // Release containers
-    releaseContainers(release, application);
+      synchronized (application) {
+        if (!ask.isEmpty()) {
+          if (LOG.isDebugEnabled()) {
+            LOG.debug("allocate: pre-update" +
+                " applicationAttemptId=" + appAttemptId +
+                " application=" + application.getApplicationId());
+          }
+          application.showRequests();
 
-    synchronized (application) {
-      if (!ask.isEmpty()) {
-        if (LOG.isDebugEnabled()) {
-          LOG.debug("allocate: pre-update" +
-              " applicationAttemptId=" + appAttemptId +
-              " application=" + application.getApplicationId());
+          // Update application requests
+          application.updateResourceRequests(ask);
+
+          application.showRequests();
         }
-        application.showRequests();
 
-        // Update application requests
-        application.updateResourceRequests(ask);
+        if (LOG.isDebugEnabled()) {
+          LOG.debug("allocate: post-update" +
+              " applicationAttemptId=" + appAttemptId +
+              " #ask=" + ask.size() +
+              " reservation= " + application.getCurrentReservation());
 
-        application.showRequests();
+          LOG.debug("Preempting " + application.getPreemptionContainers().size()
+              + " container(s)");
+        }
+
+        Set<ContainerId> preemptionContainerIds = new HashSet<ContainerId>();
+        for (RMContainer container : application.getPreemptionContainers()) {
+          preemptionContainerIds.add(container.getContainerId());
+        }
+
+        application.updateBlacklist(blacklistAdditions, blacklistRemovals);
+        ContainersAndNMTokensAllocation allocation =
+            application.pullNewlyAllocatedContainersAndNMTokens();
+
+        // Record container allocation time
+        if (!(allocation.getContainerList().isEmpty())) {
+          application.recordContainerAllocationTime(getClock().getTime());
+        }
+
+        Resource headroom = application.getHeadroom();
+        application.setApplicationHeadroomForMetrics(headroom);
+        return new Allocation(allocation.getContainerList(), headroom,
+            preemptionContainerIds, null, null, allocation.getNMTokenList());
       }
-
-      if (LOG.isDebugEnabled()) {
-        LOG.debug("allocate: post-update" +
-            " applicationAttemptId=" + appAttemptId +
-            " #ask=" + ask.size() +
-            " reservation= " + application.getCurrentReservation());
-
-        LOG.debug("Preempting " + application.getPreemptionContainers().size()
-            + " container(s)");
-      }
-
-      Set<ContainerId> preemptionContainerIds = new HashSet<ContainerId>();
-      for (RMContainer container : application.getPreemptionContainers()) {
-        preemptionContainerIds.add(container.getContainerId());
-      }
-
-      application.updateBlacklist(blacklistAdditions, blacklistRemovals);
-      ContainersAndNMTokensAllocation allocation =
-          application.pullNewlyAllocatedContainersAndNMTokens();
-
-      // Record container allocation time
-      if (!(allocation.getContainerList().isEmpty())) {
-        application.recordContainerAllocationTime(getClock().getTime());
-      }
-
-      Resource headroom = application.getHeadroom();
-      application.setApplicationHeadroomForMetrics(headroom);
-      return new Allocation(allocation.getContainerList(), headroom,
-          preemptionContainerIds, null, null, allocation.getNMTokenList());
+    } finally {
+      SchedulerMetrics.getMetrics().updateAppAllocateDurationStat(getClock().getTime() - start);
     }
   }
   
@@ -1012,6 +1018,7 @@ public class FairScheduler extends
 
     long duration = getClock().getTime() - start;
     fsOpDurations.addNodeUpdateDuration(duration);
+    SchedulerMetrics.getMetrics().updateNodeUpdateDurationStat(duration);
   }
 
   void continuousSchedulingAttempt() throws InterruptedException {
@@ -1062,6 +1069,7 @@ public class FairScheduler extends
 
   @VisibleForTesting
   synchronized void attemptScheduling(FSSchedulerNode node) {
+    long start = getClock().getTime();
     if (rmContext.isWorkPreservingRecoveryEnabled()
         && !rmContext.isSchedulerReadyForAllocatingContainers()) {
       return;
@@ -1101,6 +1109,7 @@ public class FairScheduler extends
       }
     }
     updateRootQueueMetrics();
+    SchedulerMetrics.getMetrics().updateSchedulingDurationStat(getClock().getTime() - start);
   }
 
   public FSAppAttempt getSchedulerApp(ApplicationAttemptId appAttemptId) {
@@ -1391,6 +1400,7 @@ public class FairScheduler extends
   @Override
   public void serviceInit(Configuration conf) throws Exception {
     initScheduler(conf);
+    SchedulerMetrics.initMetrics(this);
     super.serviceInit(conf);
   }
 

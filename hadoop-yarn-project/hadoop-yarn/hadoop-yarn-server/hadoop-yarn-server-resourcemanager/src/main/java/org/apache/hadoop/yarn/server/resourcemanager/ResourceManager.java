@@ -680,6 +680,7 @@ public class ResourceManager extends CompositeService implements Recoverable {
         while (!stopped && !Thread.currentThread().isInterrupted()) {
           try {
             event = eventQueue.take();
+            SchedulerMetrics.getMetrics().handle(event, SchedulerMetrics.SchedulerEventOp.HANDLED);
           } catch (InterruptedException e) {
             LOG.error("Returning, interrupted : " + e);
             return; // TODO: Kill RM.
@@ -731,6 +732,8 @@ public class ResourceManager extends CompositeService implements Recoverable {
           LOG.info("Very low remaining capacity on scheduler event queue: "
               + remCapacity);
         }
+        // Order is important. Update counter first, then put it to the queue.
+        SchedulerMetrics.getMetrics().handle(event, SchedulerMetrics.SchedulerEventOp.ADDED);
         this.eventQueue.put(event);
       } catch (InterruptedException e) {
         LOG.info("Interrupted. Trying to exit gracefully.");
@@ -987,6 +990,7 @@ public class ResourceManager extends CompositeService implements Recoverable {
 
   void reinitialize(boolean initialize) throws Exception {
     ClusterMetrics.destroy();
+    SchedulerMetrics.destroyMetrics();
     QueueMetrics.clearQueueMetrics();
     if (initialize) {
       resetDispatcher();
