@@ -25,6 +25,7 @@ import java.net.UnknownHostException;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashSet;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
@@ -91,14 +92,20 @@ import org.apache.hadoop.yarn.server.resourcemanager.rmapp.attempt.event.RMAppAt
 import org.apache.hadoop.yarn.server.resourcemanager.rmnode.RMNode;
 import org.apache.hadoop.yarn.server.resourcemanager.scheduler.AbstractYarnScheduler;
 import org.apache.hadoop.yarn.server.resourcemanager.scheduler.Allocation;
+import org.apache.hadoop.yarn.server.resourcemanager.scheduler.ResourceScheduler;
+import org.apache.hadoop.yarn.server.resourcemanager.scheduler.SchedulerApplicationAttempt;
 import org.apache.hadoop.yarn.server.resourcemanager.scheduler.SchedulerNodeReport;
 import org.apache.hadoop.yarn.server.resourcemanager.scheduler.YarnScheduler;
+import org.apache.hadoop.yarn.server.resourcemanager.scheduler.SchedulerMetrics;
 import org.apache.hadoop.yarn.server.resourcemanager.security.authorize.RMPolicyProvider;
 import org.apache.hadoop.yarn.server.security.MasterKeyData;
 import org.apache.hadoop.yarn.server.utils.BuilderUtils;
 import org.apache.hadoop.yarn.util.resource.Resources;
+import org.apache.hadoop.yarn.util.Clock;
 
 import com.google.common.annotations.VisibleForTesting;
+import org.apache.hadoop.yarn.util.SystemClock;
+
 
 @SuppressWarnings("unchecked")
 @Private
@@ -108,18 +115,26 @@ public class ApplicationMasterService extends AbstractService implements
   private final AMLivelinessMonitor amLivelinessMonitor;
   private YarnScheduler rScheduler;
   private InetSocketAddress masterServiceAddress;
+  private boolean throttleHeartbeat;
+  private long defaultHeartbeatInterval;
+  private long minHeartbeatInterval;
+  private long maxHeartbeatInterval;
+  private ThrottleHeartbeatPolicy heartbeatPolicy;
+  private InetSocketAddress bindAddress;
   private Server server;
   private final RecordFactory recordFactory =
       RecordFactoryProvider.getRecordFactory(null);
   private final ConcurrentMap<ApplicationAttemptId, AllocateResponseLock> responseMap =
       new ConcurrentHashMap<ApplicationAttemptId, AllocateResponseLock>();
   private final RMContext rmContext;
+  private volatile Clock clock;
 
   public ApplicationMasterService(RMContext rmContext, YarnScheduler scheduler) {
     super(ApplicationMasterService.class.getName());
     this.amLivelinessMonitor = rmContext.getAMLivelinessMonitor();
     this.rScheduler = scheduler;
     this.rmContext = rmContext;
+    this.clock = new SystemClock();
   }
 
   @Override
@@ -135,6 +150,41 @@ public class ApplicationMasterService extends AbstractService implements
   protected void serviceStart() throws Exception {
     Configuration conf = getConfig();
     YarnRPC rpc = YarnRPC.create(conf);
+
+    throttleHeartbeat =
+        conf.getBoolean(YarnConfiguration.THROTTLE_HEARTBEAT_ENABLED,
+            YarnConfiguration.DEFAULT_THROTTLE_HEARTBEAT_ENABLED);
+    defaultHeartbeatInterval =
+        conf.getLong(YarnConfiguration.RM_AM_HEARTBEAT_INTERVAL_MS,
+            YarnConfiguration.DEFAULT_RM_AM_HEARTBEAT_INTERVAL_MS);
+    if (defaultHeartbeatInterval <= 0) {
+      defaultHeartbeatInterval =
+          YarnConfiguration.DEFAULT_RM_AM_HEARTBEAT_INTERVAL_MS;
+      LOG.warn("Invalid Configuration. "
+          + YarnConfiguration.RM_AM_HEARTBEAT_INTERVAL_MS
+          + " should be larger than 0. Now use the default value.");
+    }
+    minHeartbeatInterval =
+        conf.getLong(YarnConfiguration.RM_AM_MIN_HEARTBEAT_INTERVAL_MS,
+            YarnConfiguration.DEFAULT_RM_AM_MIN_HEARTBEAT_INTERVAL_MS);
+    maxHeartbeatInterval =
+        conf.getLong(YarnConfiguration.RM_AM_MAX_HEARTBEAT_INTERVAL_MS,
+            YarnConfiguration.DEFAULT_RM_AM_MAX_HEARTBEAT_INTERVAL_MS);
+    if (minHeartbeatInterval <= 0) {
+      minHeartbeatInterval =
+          YarnConfiguration.DEFAULT_RM_AM_MIN_HEARTBEAT_INTERVAL_MS;
+      LOG.warn("Invalid Configuration. "
+          + YarnConfiguration.RM_AM_MIN_HEARTBEAT_INTERVAL_MS
+          + " should be larger than 0. Now use the default value.");
+    }
+    if (maxHeartbeatInterval <= 0) {
+      maxHeartbeatInterval =
+          YarnConfiguration.DEFAULT_RM_AM_MAX_HEARTBEAT_INTERVAL_MS;
+      LOG.warn("Invalid Configuration. "
+          + YarnConfiguration.RM_AM_MAX_HEARTBEAT_INTERVAL_MS
+          + " should be larger than 0. Now use the default value.");
+    }
+    heartbeatPolicy = new ThrottleHeartbeatPolicy();
 
     Configuration serverConf = conf;
     // If the auth is not-simple, enforce it to be token-based.
@@ -473,6 +523,14 @@ public class ApplicationMasterService extends AbstractService implements
         throw new InvalidApplicationMasterRequestException(message);
       }
 
+      long timestamp = clock.getTime();
+      if (lock.getTimestamp() + lock.getNextHeartbeatInterval() <= timestamp) {
+        lock.setTimestamp(timestamp);
+      } else {
+        // Now we allow any out-of-band heartbeat.
+        lock.setTimestamp(timestamp);
+      }
+
       //filter illegal progress values
       float filteredProgress = request.getProgress();
       if (Float.isNaN(filteredProgress) || filteredProgress == Float.NEGATIVE_INFINITY
@@ -601,6 +659,14 @@ public class ApplicationMasterService extends AbstractService implements
 
       allocateResponse.setNumClusterNodes(this.rScheduler.getNumClusterNodes());
 
+      // Set the throttle heartbeat interval.
+      long nextHeartbeatInterval =
+          heartbeatPolicy.getNextHeartbeatInterval(appAttemptId);
+      allocateResponse.setNextHeartbeatInterval(nextHeartbeatInterval);
+      allocateResponse.setIsEventBasedHeartbeatIntervalUpdated(
+          heartbeatPolicy.getIsEventBasedHeartbeatIntervalUpdated());
+      lock.setNextHeartbeatInterval(nextHeartbeatInterval);
+
       // add preemption to the allocateResponse message (if any)
       allocateResponse
           .setPreemptionMessage(generatePreemptionMessage(allocation));
@@ -699,12 +765,14 @@ public class ApplicationMasterService extends AbstractService implements
     LOG.info("Registering app attempt : " + attemptId);
     responseMap.put(attemptId, new AllocateResponseLock(response));
     rmContext.getNMTokenSecretManager().registerApplicationAttempt(attemptId);
+    heartbeatPolicy.addAttempt(attemptId);
   }
 
   public void unregisterAttempt(ApplicationAttemptId attemptId) {
     LOG.info("Unregistering app attempt : " + attemptId);
     responseMap.remove(attemptId);
     rmContext.getNMTokenSecretManager().unregisterApplicationAttempt(attemptId);
+    heartbeatPolicy.removeAttempt(attemptId);
   }
 
   public void refreshServiceAcls(Configuration configuration, 
@@ -723,22 +791,148 @@ public class ApplicationMasterService extends AbstractService implements
   
   public static class AllocateResponseLock {
     private AllocateResponse response;
-    
+    private long timestamp = 0L;
+    private long nextHeartbeatInterval = 0L;
+
     public AllocateResponseLock(AllocateResponse response) {
       this.response = response;
     }
-    
+
     public synchronized AllocateResponse getAllocateResponse() {
       return response;
     }
-    
+
     public synchronized void setAllocateResponse(AllocateResponse response) {
       this.response = response;
+    }
+
+    public synchronized long getTimestamp() {
+      return timestamp;
+    }
+
+    public synchronized void setTimestamp(long timestamp) {
+      this.timestamp = timestamp;
+    }
+
+    public synchronized long getNextHeartbeatInterval() {
+      return nextHeartbeatInterval;
+    }
+
+    public synchronized void setNextHeartbeatInterval(long nextHeartbeatInterval) {
+      this.nextHeartbeatInterval = nextHeartbeatInterval;
     }
   }
 
   @VisibleForTesting
   public Server getServer() {
     return this.server;
+  }
+
+  private class ThrottleHeartbeatPolicy {
+    private static final long MILLS_PER_SECOND = 1000L;
+    private final ResourceScheduler scheduler = rmContext.getScheduler();
+    private final SchedulerMetrics schedulerMetrics =
+        SchedulerMetrics.getMetrics();
+
+    private final Set<ApplicationAttemptId> attemptsHungry =
+        new LinkedHashSet<>();
+    private final Set<ApplicationAttemptId> attemptsRunning =
+        new LinkedHashSet<>();
+
+    public synchronized void updateAttemptStatus(ApplicationAttemptId id,
+                                                   boolean hungry) {
+      if (hungry)
+        attemptsHungry.add(id);
+      else
+        attemptsHungry.remove(id);
+    }
+
+    public int getNumAttemptsHungry() {
+      return attemptsHungry.size();
+    }
+
+    public synchronized void addAttempt(ApplicationAttemptId id) {
+      attemptsRunning.add(id);
+    }
+
+    public synchronized void removeAttempt(ApplicationAttemptId id) {
+      attemptsRunning.remove(id);
+      attemptsHungry.remove(id);
+    }
+
+    public int getNumAttemptsRunning() {
+      return attemptsRunning.size();
+    }
+
+    public long getNextHeartbeatInterval(ApplicationAttemptId appAttemptId) {
+      // TODO: consider discrimination on apps?
+      if (!throttleHeartbeat) {
+        return defaultHeartbeatInterval;
+      } else {
+        // if there isn't enough stat info yet.
+        if (schedulerMetrics.getSchedulingExecRate() == null
+            || schedulerMetrics.getSchedulingExecRate().max() < 100)
+          return defaultHeartbeatInterval;
+
+        SchedulerApplicationAttempt attempt =
+            ((AbstractYarnScheduler)scheduler)
+                .getApplicationAttempt(appAttemptId);
+        if (attempt.getAppAttemptResourceUsage()
+            .getPending().equals(Resources.none())) {
+          updateAttemptStatus(appAttemptId, false);
+          // TODO: we'd better enable event-based heartbeat for this case
+          // thus we can return maxHeartbeatInterval to reduce the communications
+          return 3 * defaultHeartbeatInterval;
+        } else {
+          updateAttemptStatus(appAttemptId, true);
+        }
+
+        // If all of the running apps have resource request, the total heartbeat
+        // should less then the total times of scheduling method be called if
+        // "assignMultiple" is disabled and every allocation is accepted.
+        double regularInterval;
+        double upperLimitOfAllocationsPerSecond =
+            schedulerMetrics.getSchedulingExecRate().max()
+                * MILLS_PER_SECOND / schedulerMetrics.getMetricUpdateIntervalMills();
+
+        regularInterval = (getNumAttemptsRunning() - getNumAttemptsHungry())
+            / upperLimitOfAllocationsPerSecond * MILLS_PER_SECOND;
+
+        long interval = (long) regularInterval;
+
+        interval =
+            interval > minHeartbeatInterval ? interval : minHeartbeatInterval;
+        return
+            interval < maxHeartbeatInterval ? interval : maxHeartbeatInterval;
+      }
+    }
+
+    public boolean getIsEventBasedHeartbeatIntervalUpdated() {
+      if (SchedulerMetrics.getMetrics().getSchedulerLoad() ==
+          SchedulerMetrics.SchedulerLoad.HEAVY) {
+        return true;
+      }
+      return false;
+    }
+  }
+
+  @VisibleForTesting
+  public void initThrottleHeartbeat() {
+    Configuration conf = getConfig();
+
+    throttleHeartbeat =
+        conf.getBoolean(YarnConfiguration.THROTTLE_HEARTBEAT_ENABLED,
+            YarnConfiguration.DEFAULT_THROTTLE_HEARTBEAT_ENABLED);
+    defaultHeartbeatInterval =
+        conf.getLong(YarnConfiguration.RM_AM_HEARTBEAT_INTERVAL_MS,
+            YarnConfiguration.DEFAULT_RM_AM_HEARTBEAT_INTERVAL_MS);
+    minHeartbeatInterval =
+        conf.getLong(YarnConfiguration.RM_AM_MIN_HEARTBEAT_INTERVAL_MS,
+            YarnConfiguration.DEFAULT_RM_AM_MIN_HEARTBEAT_INTERVAL_MS);
+    this.heartbeatPolicy = new ThrottleHeartbeatPolicy();
+  }
+
+  ThrottleHeartbeatPolicy getHeartbeatPolicy() {
+    return this.heartbeatPolicy;
   }
 }

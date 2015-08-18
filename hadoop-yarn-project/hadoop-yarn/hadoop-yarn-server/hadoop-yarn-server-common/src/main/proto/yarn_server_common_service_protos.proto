@@ -77,11 +77,12 @@ message NodeHeartbeatResponseProto {
   optional NodeActionProto nodeAction = 4;
   repeated ContainerIdProto containers_to_cleanup = 5;
   repeated ApplicationIdProto applications_to_cleanup = 6;
-  optional int64 nextHeartBeatInterval = 7;
+  optional int64 nextHeartbeatInterval = 7;
   optional string diagnostics_message = 8;
   repeated ContainerIdProto containers_to_be_removed_from_nm = 9;
   repeated SystemCredentialsForAppsProto system_credentials_for_apps = 10;
   optional bool areNodeLabelsAcceptedByRM = 11 [default = false];
+  optional bool isEventBasedHeartbeatIntervalUpdated =12;
 }
 
 message SystemCredentialsForAppsProto {

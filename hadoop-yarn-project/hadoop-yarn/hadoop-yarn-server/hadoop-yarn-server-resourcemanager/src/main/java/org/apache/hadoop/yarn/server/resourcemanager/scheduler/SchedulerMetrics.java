@@ -372,7 +372,7 @@ public class SchedulerMetrics {
   public void evaluateLoad() {
     // If there hasn't been stat data or num of samples is inadequate to evaluate the scheduler load
     if (getNumWaitingEventsStat() == null || getSchedulingAccumulationStat() == null ||
-        getSchedulingAccumulationStat().numSamples() < 100) {
+        getSchedulingAccumulationStat().numSamples() < 60) {
       schedulerLoad = SchedulerLoad.UNKNOWN;
       return;
     }

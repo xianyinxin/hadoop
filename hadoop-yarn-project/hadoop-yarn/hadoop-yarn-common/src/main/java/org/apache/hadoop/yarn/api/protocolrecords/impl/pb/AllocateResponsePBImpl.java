@@ -209,6 +209,30 @@ public class AllocateResponsePBImpl extends AllocateResponse {
   }
 
   @Override
+  public synchronized long getNextHeartbeatInterval() {
+    AllocateResponseProtoOrBuilder p = viaProto ? proto : builder;
+    return (p.getNextHeartbeatInterval());
+  }
+
+  @Override
+  public synchronized void setNextHeartbeatInterval(long nextHeartbeatInterval) {
+    maybeInitBuilder();
+    builder.setNextHeartbeatInterval(nextHeartbeatInterval);
+  }
+
+  @Override
+  public boolean getIsEventBasedHeartbeatIntervalUpdated() {
+    AllocateResponseProtoOrBuilder p = viaProto ? proto : builder;
+    return (p.getIsEventBasedHeartbeatIntervalUpdated());
+  };
+
+  @Override
+  public void setIsEventBasedHeartbeatIntervalUpdated(boolean isEventBasedHeartbeatIntervalUpdated) {
+    maybeInitBuilder();
+    builder.setIsEventBasedHeartbeatIntervalUpdated(isEventBasedHeartbeatIntervalUpdated);
+  };
+
+  @Override
   public synchronized Resource getAvailableResources() {
     if (this.limit != null) {
       return this.limit;

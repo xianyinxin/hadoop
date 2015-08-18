@@ -180,6 +180,7 @@ public class MRAMSimulator extends AMSimulator {
       }
     });
     if (response != null) {
+      updateRepeatInterval(response.getNextHeartbeatInterval());
       responseQueue.put(response);
     }
   }

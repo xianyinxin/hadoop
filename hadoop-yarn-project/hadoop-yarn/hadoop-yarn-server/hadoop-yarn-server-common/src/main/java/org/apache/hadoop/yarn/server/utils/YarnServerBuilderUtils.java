@@ -57,13 +57,26 @@ public class YarnServerBuilderUtils {
     response.setNodeAction(action);
     response.setContainerTokenMasterKey(containerTokenMasterKey);
     response.setNMTokenMasterKey(nmTokenMasterKey);
-    response.setNextHeartBeatInterval(nextHeartbeatInterval);
+    response.setNextHeartbeatInterval(nextHeartbeatInterval);
     if(containersToCleanUp != null) {
       response.addAllContainersToCleanup(containersToCleanUp);
     }
     if(applicationsToCleanUp != null) {
       response.addAllApplicationsToCleanup(applicationsToCleanUp);
     }
+    return response;
+  }
+
+  public static NodeHeartbeatResponse newNodeHeartbeatResponse(
+      int responseId,
+      NodeAction action, List<ContainerId> containersToCleanUp,
+      List<ApplicationId> applicationsToCleanUp,
+      MasterKey containerTokenMasterKey, MasterKey nmTokenMasterKey,
+      long nextHeartbeatInterval, boolean isEventBasedHeartbeatIntervalUpdated) {
+    NodeHeartbeatResponse response = newNodeHeartbeatResponse(responseId, action,
+        containersToCleanUp, applicationsToCleanUp, containerTokenMasterKey,
+        nmTokenMasterKey, nextHeartbeatInterval);
+    response.setIsEventBasedHeartbeatIntervalUpdated(isEventBasedHeartbeatIntervalUpdated);
     return response;
   }
 }

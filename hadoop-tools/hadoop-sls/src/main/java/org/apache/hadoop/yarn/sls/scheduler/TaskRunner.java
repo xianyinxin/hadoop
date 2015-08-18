@@ -131,6 +131,10 @@ public class TaskRunner {
     public void setEndTime(long et) {
       endTime = et;
     }
+
+    public void updateRepeatInterval(long newInterval) {
+      this.repeatInterval = newInterval;
+    }
   }
 
   private DelayQueue queue;

@@ -69,6 +69,11 @@ public abstract class RMCommunicator extends AbstractService
     implements RMHeartbeatHandler {
   private static final Log LOG = LogFactory.getLog(RMCommunicator.class);
   private int rmPollInterval;//millis
+  private int rmEventBasedPollInterval;
+  private int configuredRmEventBasedPollInterval;
+  private boolean rmNeedUpdate;
+  private boolean rmEventBasedPollEnabled;
+  private Object rmPollMonitor;
   protected ApplicationId applicationId;
   private final AtomicBoolean stopped;
   protected Thread allocatorThread;
@@ -102,6 +107,7 @@ public abstract class RMCommunicator extends AbstractService
     this.stopped = new AtomicBoolean(false);
     this.heartbeatCallbacks = new ConcurrentLinkedQueue<Runnable>();
     this.schedulerResourceTypes = EnumSet.of(SchedulerResourceTypes.MEMORY);
+    this.rmPollMonitor = new Object();
   }
 
   @Override
@@ -110,6 +116,26 @@ public abstract class RMCommunicator extends AbstractService
     rmPollInterval =
         conf.getInt(MRJobConfig.MR_AM_TO_RM_HEARTBEAT_INTERVAL_MS,
             MRJobConfig.DEFAULT_MR_AM_TO_RM_HEARTBEAT_INTERVAL_MS);
+    rmEventBasedPollEnabled =
+        conf.getBoolean(MRJobConfig.MR_AM_TO_RM_EVENT_BASED_HEARTBEAT_ENABLED,
+            MRJobConfig.DEFAULT_MR_AM_TO_RM_EVENT_BASED_HEARTBEAT_ENABLED);
+    if (rmEventBasedPollEnabled) {
+      configuredRmEventBasedPollInterval =
+          conf.getInt(MRJobConfig.MR_AM_TO_RM_EVENT_BASED_HEARTBEAT_INTERVAL_MS,
+              MRJobConfig.DEFAULT_MR_AM_TO_RM_EVENT_BASED_HEARTBEAT_INTERVAL_MS);
+      rmEventBasedPollInterval = configuredRmEventBasedPollInterval;
+      // check configuredRmEventBasedPollInterval and rmPollInterval
+      if (configuredRmEventBasedPollInterval >= rmPollInterval) {
+        rmEventBasedPollEnabled = false;
+        LOG.warn("Event-based heartbeat is disabled because the event-based heartbeat interval "
+            + configuredRmEventBasedPollInterval + " is equal to or larger than regular heartbeat interval "
+            + rmPollInterval);
+      } else {
+        LOG.info("Enable and initialize event-based heartbeat interval to " +
+            configuredRmEventBasedPollInterval + " ms");
+      }
+    }
+    rmNeedUpdate = true;
   }
 
   @Override
@@ -272,11 +298,39 @@ public abstract class RMCommunicator extends AbstractService
 
   protected void startAllocatorThread() {
     allocatorThread = new Thread(new Runnable() {
+      private void waitHeartbeatInterval(int minInterval, int maxInterval) throws InterruptedException {
+        synchronized(rmPollMonitor) {
+          long start = System.currentTimeMillis();
+          long waitInterval = maxInterval;
+          if(rmNeedUpdate == true) {
+            rmNeedUpdate = false;
+            waitInterval = minInterval;
+          }
+          while(waitInterval > 0) {
+            rmPollMonitor.wait(waitInterval);
+            if(rmNeedUpdate == true) {
+              long timeElapse = System.currentTimeMillis() - start;
+              rmNeedUpdate = false;
+              if(timeElapse < minInterval) {
+                waitInterval = minInterval - timeElapse;
+              } else {
+                waitInterval = 0;
+              }
+            } else {
+              waitInterval = 0;
+            }
+          }
+        }
+      }
       @Override
       public void run() {
         while (!stopped.get() && !Thread.currentThread().isInterrupted()) {
           try {
-            Thread.sleep(rmPollInterval);
+            if(rmEventBasedPollEnabled == true) {
+              waitHeartbeatInterval(rmEventBasedPollInterval, rmPollInterval);
+            } else {
+              Thread.sleep(rmPollInterval);
+            }
             try {
               heartbeat();
             } catch (YarnRuntimeException e) {
@@ -315,6 +369,15 @@ public abstract class RMCommunicator extends AbstractService
 
   protected abstract void heartbeat() throws Exception;
 
+  protected void notifyAllocatorThread() {
+    if(rmEventBasedPollEnabled == true) {
+      synchronized(rmPollMonitor) {
+        rmNeedUpdate = true;
+        rmPollMonitor.notify();
+      }
+    }
+  }
+
   private void executeHeartbeatCallbacks() {
     Runnable callback = null;
     while ((callback = heartbeatCallbacks.poll()) != null) {
@@ -342,6 +405,18 @@ public abstract class RMCommunicator extends AbstractService
     this.isSignalled = isSignalled;
     LOG.info("RMCommunicator notified that isSignalled is: " 
         + isSignalled);
+  }
+
+  protected void updateHeartbeatInterval(int nextHeartbeatInterval, boolean flag) {
+    rmPollInterval = nextHeartbeatInterval;
+    if (rmEventBasedPollEnabled) {
+      if (flag)
+        rmEventBasedPollInterval = nextHeartbeatInterval;
+      else
+        rmEventBasedPollInterval =
+            configuredRmEventBasedPollInterval < nextHeartbeatInterval ?
+                configuredRmEventBasedPollInterval : nextHeartbeatInterval;
+    }
   }
 
   @VisibleForTesting

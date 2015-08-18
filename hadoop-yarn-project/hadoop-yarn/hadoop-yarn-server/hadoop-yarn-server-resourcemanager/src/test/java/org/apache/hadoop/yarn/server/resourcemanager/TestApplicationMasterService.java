@@ -20,7 +20,6 @@ package org.apache.hadoop.yarn.server.resourcemanager;
 
 import org.apache.hadoop.yarn.api.protocolrecords.RegisterApplicationMasterResponse;
 import org.apache.hadoop.yarn.proto.YarnServiceProtos.SchedulerResourceTypes;
-import org.apache.hadoop.yarn.server.resourcemanager.rmapp.RMAppState;
 import org.apache.hadoop.yarn.server.resourcemanager.scheduler.capacity.CapacityScheduler;
 import org.apache.hadoop.yarn.server.resourcemanager.scheduler.capacity.CapacitySchedulerConfiguration;
 import org.apache.hadoop.yarn.server.resourcemanager.scheduler.fair.FairScheduler;
@@ -69,6 +68,35 @@ public class TestApplicationMasterService {
     conf = new YarnConfiguration();
     conf.setClass(YarnConfiguration.RM_SCHEDULER, FifoScheduler.class,
       ResourceScheduler.class);
+  }
+
+  @Test(timeout = 50000)
+  public void testGetNextHeartBeatInterval() throws Exception {
+    conf.set(YarnConfiguration.RM_AM_HEARTBEAT_INTERVAL_MS, "7500");
+    MockRM rm = new MockRM(conf);
+    rm.start();
+
+    // Init the conf and the throttleHeartbeatPolicy
+    rm.getApplicationMasterService().initThrottleHeartbeat();
+
+    // Register node1
+    MockNM nm1 = rm.registerNode("127.0.0.1:1234", 6 * GB);
+
+    // Submit an application
+    RMApp app1 = rm.submitApp(2048);
+
+    // kick the scheduling
+    nm1.nodeHeartbeat(true);
+    RMAppAttempt attempt1 = app1.getCurrentAppAttempt();
+    MockAM am1 = rm.sendAMLaunched(attempt1.getAppAttemptId());
+    am1.registerAppAttempt();
+
+    am1.addRequests(new String[]{"127.0.0.1"}, GB, 1, 1);
+    AllocateResponse alloc1Response = am1.schedule(); // send the request
+
+    Assert.assertEquals(7500L, alloc1Response.getNextHeartbeatInterval());
+
+    rm.stop();
   }
 
   @Test(timeout = 3000000)

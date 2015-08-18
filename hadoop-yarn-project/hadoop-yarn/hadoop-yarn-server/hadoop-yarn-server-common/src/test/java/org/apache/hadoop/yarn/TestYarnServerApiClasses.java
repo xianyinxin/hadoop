@@ -144,7 +144,7 @@ public class TestYarnServerApiClasses {
     original.setDiagnosticsMessage("testDiagnosticMessage");
     original.setContainerTokenMasterKey(getMasterKey());
     original.setNMTokenMasterKey(getMasterKey());
-    original.setNextHeartBeatInterval(1000);
+    original.setNextHeartbeatInterval(1000);
     original.setNodeAction(NodeAction.NORMAL);
     original.setResponseId(100);
 
@@ -152,7 +152,7 @@ public class TestYarnServerApiClasses {
         original.getProto());
     assertEquals(100, copy.getResponseId());
     assertEquals(NodeAction.NORMAL, copy.getNodeAction());
-    assertEquals(1000, copy.getNextHeartBeatInterval());
+    assertEquals(1000, copy.getNextHeartbeatInterval());
     assertEquals(1, copy.getContainerTokenMasterKey().getKeyId());
     assertEquals(1, copy.getNMTokenMasterKey().getKeyId());
     assertEquals("testDiagnosticMessage", copy.getDiagnosticsMessage());

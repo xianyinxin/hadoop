@@ -52,6 +52,7 @@ import org.apache.hadoop.yarn.security.ContainerTokenIdentifier;
 import org.apache.hadoop.yarn.server.api.protocolrecords.NMContainerStatus;
 import org.apache.hadoop.yarn.server.nodemanager.NMAuditLogger;
 import org.apache.hadoop.yarn.server.nodemanager.NMAuditLogger.AuditConstants;
+import org.apache.hadoop.yarn.server.nodemanager.NodeStatusUpdater;
 import org.apache.hadoop.yarn.server.nodemanager.containermanager.AuxServicesEvent;
 import org.apache.hadoop.yarn.server.nodemanager.containermanager.AuxServicesEventType;
 import org.apache.hadoop.yarn.server.nodemanager.containermanager.application.ApplicationContainerFinishedEvent;
@@ -99,6 +100,7 @@ public class ContainerImpl implements Container {
   private long containerLocalizationStartTime;
   private long containerLaunchStartTime;
   private static Clock clock = new SystemClock();
+  private NodeStatusUpdater nodeStatusUpdater;
 
   /** The NM-wide configuration - not specific to this container */
   private final Configuration daemonConf;
@@ -145,6 +147,7 @@ public class ContainerImpl implements Container {
     this.writeLock = readWriteLock.writeLock();
 
     stateMachine = stateMachineFactory.make(this);
+    nodeStatusUpdater = null;
   }
 
   // constructor for a recovered container
@@ -160,6 +163,30 @@ public class ContainerImpl implements Container {
     this.exitCode = exitCode;
     this.recoveredAsKilled = wasKilled;
     this.diagnostics.append(diagnostics);
+    nodeStatusUpdater = null;
+  }
+
+  // constructor with NodeStatusUpdater
+  public ContainerImpl(Configuration conf, Dispatcher dispatcher,
+                       NMStateStoreService stateStore, ContainerLaunchContext launchContext,
+                       Credentials creds, NodeManagerMetrics metrics,
+                       ContainerTokenIdentifier containerTokenIdentifier,
+                       NodeStatusUpdater nodeStatusUpdater) {
+    this(conf, dispatcher, stateStore, launchContext, creds, metrics,
+        containerTokenIdentifier);
+    this.nodeStatusUpdater = nodeStatusUpdater;
+  }
+
+  // constructor for a recovered container with NodeStatusUpdater
+  public ContainerImpl(Configuration conf, Dispatcher dispatcher,
+                       NMStateStoreService stateStore, ContainerLaunchContext launchContext,
+                       Credentials creds, NodeManagerMetrics metrics,
+                       ContainerTokenIdentifier containerTokenIdentifier,
+                       RecoveredContainerStatus recoveredStatus, int exitCode,
+                       String diagnostics, boolean wasKilled, NodeStatusUpdater nodeStatusUpdater) {
+    this(conf, dispatcher, stateStore, launchContext, creds, metrics,
+        containerTokenIdentifier, recoveredStatus, exitCode, diagnostics, wasKilled);
+    this.nodeStatusUpdater = nodeStatusUpdater;
   }
 
   private static final ContainerDiagnosticsUpdateTransition UPDATE_DIAGNOSTICS_TRANSITION =
@@ -1129,6 +1156,15 @@ public class ContainerImpl implements Container {
         LOG.info("Container " + containerID + " transitioned from "
             + oldState
             + " to " + newState);
+      }
+      // if newState is DONE, we need notify NodeStatusUpdater
+      if(this.nodeStatusUpdater != null && newState == ContainerState.DONE) {
+        if(LOG.isDebugEnabled()) {
+          LOG.debug("Container " + containerID + " transited to " + newState
+              + ". Notify NM to send heart beat to RM");
+        }
+        this.nodeStatusUpdater.sendOutofBandHeartBeat(
+            NodeStatusUpdater.EventBasedHeartbeatSendRequest.MINIMUM_DELAY);
       }
     } finally {
       this.writeLock.unlock();

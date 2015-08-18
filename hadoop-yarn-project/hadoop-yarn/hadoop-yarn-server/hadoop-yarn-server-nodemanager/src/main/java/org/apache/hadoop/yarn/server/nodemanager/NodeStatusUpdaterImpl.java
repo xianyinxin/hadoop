@@ -95,12 +95,16 @@ public class NodeStatusUpdaterImpl extends AbstractService implements
   private static final Log LOG = LogFactory.getLog(NodeStatusUpdaterImpl.class);
 
   private final Object heartbeatMonitor = new Object();
+  private EventBasedHeartbeatSendRequest heartbeatSendReq;
+  private long rmEventBasedHeartbeatInterval;
+  private long configuredRmEventBasedInterval;
+  private boolean rmEventBasedHeartbeatEnabled;
 
   private final Context context;
   private final Dispatcher dispatcher;
 
   private NodeId nodeId;
-  private long nextHeartBeatInterval;
+  private long nextHeartbeatInterval;
   private ResourceTracker resourceTracker;
   private Resource totalResource;
   private int httpPort;
@@ -204,6 +208,20 @@ public class NodeStatusUpdaterImpl extends AbstractService implements
         + durationToTrackStoppedContainers);
     }
     super.serviceInit(conf);
+    this.heartbeatSendReq = EventBasedHeartbeatSendRequest.NONE;
+    this.rmEventBasedHeartbeatEnabled =
+        conf.getBoolean(YarnConfiguration.NM_EVENT_BASED_HEARTBEAT_ENABLED,
+            YarnConfiguration.DEFAULT_NM_EVENT_BASED_HEARTBEAT_ENABLED);
+    if (this.rmEventBasedHeartbeatEnabled) {
+      this.configuredRmEventBasedInterval =
+          conf.getLong(YarnConfiguration.NM_EVENT_BASED_HEARTBEAT_INTERVAL_MS,
+              YarnConfiguration.DEFAULT_NM_EVENT_BASED_HEARTBEAT_INTERVAL_MS);
+      rmEventBasedHeartbeatInterval = configuredRmEventBasedInterval;
+      LOG.info("Enable and Initialize event-based heart beat interval to "
+          + this.rmEventBasedHeartbeatInterval + " ms");
+    } else {
+      this.rmEventBasedHeartbeatInterval = 0;
+    }
     LOG.info("Initialized nodemanager with :" +
         " physical-memory=" + memoryMb + " virtual-memory=" + virtualMemoryMb +
         " virtual-cores=" + virtualCores);
@@ -601,7 +619,23 @@ public class NodeStatusUpdaterImpl extends AbstractService implements
   @Override
   public void sendOutofBandHeartBeat() {
     synchronized (this.heartbeatMonitor) {
+      if (rmEventBasedHeartbeatEnabled) {
+        if (heartbeatSendReq.compareTo(EventBasedHeartbeatSendRequest.IMMEDIATELY) < 0) {
+          heartbeatSendReq = EventBasedHeartbeatSendRequest.IMMEDIATELY;
+        }
+      }
       this.heartbeatMonitor.notify();
+    }
+  }
+
+  public void sendOutofBandHeartBeat(EventBasedHeartbeatSendRequest hbReq) {
+    synchronized (this.heartbeatMonitor) {
+      if (rmEventBasedHeartbeatEnabled) {
+        if (heartbeatSendReq.compareTo(hbReq) < 0) {
+          heartbeatSendReq = hbReq;
+        }
+        this.heartbeatMonitor.notify();
+      }
     }
   }
 
@@ -673,6 +707,46 @@ public class NodeStatusUpdaterImpl extends AbstractService implements
   protected void startStatusUpdater() {
 
     statusUpdaterRunnable = new Runnable() {
+
+      private void waitHeartbeatInterval(long minInterval, long maxInterval) throws InterruptedException {
+        long start = System.currentTimeMillis();
+        long waitInterval = maxInterval;
+        if (heartbeatSendReq.equals(EventBasedHeartbeatSendRequest.IMMEDIATELY)) {
+          heartbeatSendReq = EventBasedHeartbeatSendRequest.NONE;
+          return;
+        } else if (heartbeatSendReq.equals(EventBasedHeartbeatSendRequest.MINIMUM_DELAY)) {
+          heartbeatSendReq = EventBasedHeartbeatSendRequest.NONE;
+          waitInterval = minInterval;
+        }
+        while (!isStopped && waitInterval > 0) {
+          heartbeatMonitor.wait(waitInterval);
+          if(heartbeatSendReq.equals(EventBasedHeartbeatSendRequest.NONE)
+              || heartbeatSendReq.equals(EventBasedHeartbeatSendRequest.IMMEDIATELY)) {
+            heartbeatSendReq = EventBasedHeartbeatSendRequest.NONE;
+            waitInterval = 0;
+          } else {
+            long timeElapse = System.currentTimeMillis() - start;
+            heartbeatSendReq = EventBasedHeartbeatSendRequest.NONE;
+            if(timeElapse < minInterval) {
+              waitInterval = minInterval - timeElapse;
+            } else {
+              waitInterval = 0;
+            }
+          }
+        }
+      }
+
+      private void updateHeartbeatInterval(long newInterval, boolean flag) {
+        nextHeartbeatInterval = newInterval;
+        if (rmEventBasedHeartbeatEnabled) {
+          if (flag)
+            rmEventBasedHeartbeatInterval = newInterval;
+          else
+            rmEventBasedHeartbeatInterval =
+                configuredRmEventBasedInterval < newInterval? configuredRmEventBasedInterval : newInterval;
+        }
+      }
+
       @Override
       @SuppressWarnings("unchecked")
       public void run() {
@@ -725,7 +799,8 @@ public class NodeStatusUpdaterImpl extends AbstractService implements
 
             response = resourceTracker.nodeHeartbeat(request);
             //get next heartbeat interval from response
-            nextHeartBeatInterval = response.getNextHeartBeatInterval();
+            updateHeartbeatInterval(response.getNextHeartbeatInterval(),
+                response.getIsEventBasedHeartbeatIntervalUpdated());
             updateMasterKeys(response);
 
             if (response.getNodeAction() == NodeAction.SHUTDOWN) {
@@ -809,11 +884,15 @@ public class NodeStatusUpdaterImpl extends AbstractService implements
             LOG.error("Caught exception in status-updater", e);
           } finally {
             synchronized (heartbeatMonitor) {
-              nextHeartBeatInterval = nextHeartBeatInterval <= 0 ?
+              nextHeartbeatInterval = nextHeartbeatInterval <= 0 ?
                   YarnConfiguration.DEFAULT_RM_NM_HEARTBEAT_INTERVAL_MS :
-                    nextHeartBeatInterval;
+                  nextHeartbeatInterval;
               try {
-                heartbeatMonitor.wait(nextHeartBeatInterval);
+                if(!rmEventBasedHeartbeatEnabled) {
+                  heartbeatMonitor.wait(nextHeartbeatInterval);
+                } else {
+                  waitHeartbeatInterval(rmEventBasedHeartbeatInterval, nextHeartbeatInterval);
+                }
               } catch (InterruptedException e) {
                 // Do Nothing
               }

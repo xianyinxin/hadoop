@@ -360,11 +360,6 @@ public class YarnConfiguration extends Configuration {
   public static final String DEFAULT_RM_SCHEDULER = 
       "org.apache.hadoop.yarn.server.resourcemanager.scheduler.capacity.CapacityScheduler";
 
-  /** RM set next Heartbeat interval for NM */
-  public static final String RM_NM_HEARTBEAT_INTERVAL_MS =
-      RM_PREFIX + "nodemanagers.heartbeat-interval-ms";
-  public static final long DEFAULT_RM_NM_HEARTBEAT_INTERVAL_MS = 1000;
-
   /** Number of worker threads that write the history data. */
   public static final String RM_HISTORY_WRITER_MULTI_THREADED_DISPATCHER_POOL_SIZE =
       RM_PREFIX + "history-writer.multi-threaded-dispatcher.pool-size";
@@ -468,7 +463,7 @@ public class YarnConfiguration extends Configuration {
   public static final String DEFAULT_RM_CONFIGURATION_PROVIDER_CLASS =
       "org.apache.hadoop.yarn.LocalConfigurationProvider";
 
-  public static final String YARN_AUTHORIZATION_PROVIDER = YARN_PREFIX
+    public static final String YARN_AUTHORIZATION_PROVIDER = YARN_PREFIX
       + "authorization-provider";
   private static final List<String> RM_SERVICES_ADDRESS_CONF_KEYS_HTTP =
       Collections.unmodifiableList(Arrays.asList(
@@ -1829,6 +1824,67 @@ public class YarnConfiguration extends Configuration {
   public static final String SHARED_CACHE_NM_UPLOADER_THREAD_COUNT =
       SHARED_CACHE_PREFIX + "nm.uploader.thread-count";
   public static final int DEFAULT_SHARED_CACHE_NM_UPLOADER_THREAD_COUNT = 20;
+
+  ////////////////////////////////
+  // Heartbeat Configs
+  ////////////////////////////////
+
+  /** Throttle heartbeat */
+  public static final String THROTTLE_HEARTBEAT_ENABLED =
+      RM_PREFIX + "throttle-heartbeat.enabled";
+  public static final boolean DEFAULT_THROTTLE_HEARTBEAT_ENABLED = false;
+
+  /** RM set default next regular heartbeat interval for AM */
+  public static final String RM_AM_HEARTBEAT_INTERVAL_MS =
+      RM_PREFIX + "applicationmasters.heartbeat-interval-ms";
+  public static final long DEFAULT_RM_AM_HEARTBEAT_INTERVAL_MS = 1000;
+
+  /** The lower limit of the AM regular heartbeat interval */
+  public static final String RM_AM_MIN_HEARTBEAT_INTERVAL_MS =
+      RM_PREFIX + "applicationmasters.heartbeat-min-interval-ms";
+  public static final long DEFAULT_RM_AM_MIN_HEARTBEAT_INTERVAL_MS = 100;
+
+  /** The upper limit of the AM regular heartbeat interval */
+  public static final String RM_AM_MAX_HEARTBEAT_INTERVAL_MS =
+      RM_PREFIX + "applicationmasters.heartbeat-max-interval-ms";
+  public static final long DEFAULT_RM_AM_MAX_HEARTBEAT_INTERVAL_MS = 1000 * 60;
+
+  /** RM set default next regular heartbeat interval for NM */
+  public static final String RM_NM_HEARTBEAT_INTERVAL_MS =
+      RM_PREFIX + "nodemanagers.heartbeat-interval-ms";
+  public static final long DEFAULT_RM_NM_HEARTBEAT_INTERVAL_MS = 1000;
+
+  /** The lower limit of the NM regular heartbeat interval */
+  public static final String RM_NM_MIN_HEARTBEAT_INTERVAL_MS =
+      RM_PREFIX + "nodemanagers.heartbeat-min-interval-ms";
+  public static final long DEFAULT_RM_NM_MIN_HEARTBEAT_INTERVAL_MS = 100;
+
+  /** The upper limit of the NM regular heartbeat interval */
+  public static final String RM_NM_MAX_HEARTBEAT_INTERVAL_MS =
+      RM_PREFIX + "nodemanagers.heartbeat-max-interval-ms";
+  public static final long DEFAULT_RM_NM_MAX_HEARTBEAT_INTERVAL_MS = 1000 * 60;
+
+  /** Event-based heartbeat between NM and RM */
+  public static final String NM_EVENT_BASED_HEARTBEAT_ENABLED =
+      NM_PREFIX + "event-based-heartbeat.enabled";
+  public static final boolean DEFAULT_NM_EVENT_BASED_HEARTBEAT_ENABLED = true;
+
+  public static final String NM_EVENT_BASED_HEARTBEAT_INTERVAL_MS =
+      NM_PREFIX + "event-based-heartbeat-interval-ms";
+  public static final long DEFAULT_NM_EVENT_BASED_HEARTBEAT_INTERVAL_MS = 50;
+
+  /** Event-based heartbeat between AM and RM */
+  public static final String
+      YARN_CLIENT_APPLICATION_MASTER_PROTOCOL_EVENT_BASED_HEARTBEAT_ENABLED =
+      YARN_PREFIX + "client.application-master-protocol.event-based-heartbeat.enabled";
+  public static final boolean
+      DEFAULT_YARN_CLIENT_APPLICATION_MASTER_PROTOCOL_EVENT_BASED_HEARTBEAT_ENABLED = true;
+
+  public static final String
+      YARN_CLIENT_APPLICATION_MASTER_PROTOCOL_EVENT_BASED_HEARTBEAT_INTERVAL =
+      YARN_PREFIX + "client.application-master-protocol.event-based-heartbeat-interval-ms";
+  public static final int
+      DEFAULT_YARN_CLIENT_APPLICATION_MASTER_PROTOCOL_EVENT_BASED_HEARTBEAT_INTERVAL = 50;
 
   ////////////////////////////////
   // Other Configs
