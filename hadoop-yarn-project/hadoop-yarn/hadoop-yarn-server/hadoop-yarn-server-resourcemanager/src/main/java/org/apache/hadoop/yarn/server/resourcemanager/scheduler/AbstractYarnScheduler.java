@@ -52,6 +52,7 @@ import org.apache.hadoop.yarn.server.resourcemanager.RMAuditLogger;
 import org.apache.hadoop.yarn.server.resourcemanager.RMAuditLogger.AuditConstants;
 import org.apache.hadoop.yarn.server.resourcemanager.RMContext;
 import org.apache.hadoop.yarn.server.resourcemanager.ResourceManager;
+import org.apache.hadoop.yarn.server.resourcemanager.notificationsmanager.NotificationsManager;
 import org.apache.hadoop.yarn.server.resourcemanager.rmapp.RMApp;
 import org.apache.hadoop.yarn.server.resourcemanager.rmapp.RMAppEvent;
 import org.apache.hadoop.yarn.server.resourcemanager.rmapp.RMAppEventType;
@@ -429,8 +430,8 @@ public abstract class AbstractYarnScheduler
       RMNode node) {
     Container container =
         Container.newInstance(status.getContainerId(), node.getNodeID(),
-          node.getHttpAddress(), status.getAllocatedResource(),
-          status.getPriority(), null);
+            node.getHttpAddress(), status.getAllocatedResource(),
+            status.getPriority(), null);
     ApplicationAttemptId attemptId =
         container.getId().getApplicationAttemptId();
     RMContainer rmContainer =

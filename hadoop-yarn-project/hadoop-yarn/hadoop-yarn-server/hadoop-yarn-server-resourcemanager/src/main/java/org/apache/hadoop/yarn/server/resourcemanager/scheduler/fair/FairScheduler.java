@@ -1707,4 +1707,8 @@ public class FairScheduler extends
     }
     return targetQueueName;
   }
+
+  public synchronized RMContext getRMContext() {
+    return this.rmContext;
+  }
 }

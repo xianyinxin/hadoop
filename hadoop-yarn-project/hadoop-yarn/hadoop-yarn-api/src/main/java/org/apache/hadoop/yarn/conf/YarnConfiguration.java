@@ -1874,13 +1874,34 @@ public class YarnConfiguration extends Configuration {
   public static final long DEFAULT_NM_EVENT_BASED_HEARTBEAT_INTERVAL_MS = 50;
 
   /** Event-based heartbeat between AM and RM */
-  public static final String YARN_CLIENT_APPLICATION_MASTER_PROTOCOL_EVENT_BASED_HEARTBEAT_ENABLED =
+  public static final String
+      YARN_CLIENT_APPLICATION_MASTER_PROTOCOL_EVENT_BASED_HEARTBEAT_ENABLED =
       YARN_PREFIX + "client.application-master-protocol.event-based-heartbeat.enabled";
-  public static final boolean DEFAULT_YARN_CLIENT_APPLICATION_MASTER_PROTOCOL_EVENT_BASED_HEARTBEAT_ENABLED = true;
+  public static final boolean
+      DEFAULT_YARN_CLIENT_APPLICATION_MASTER_PROTOCOL_EVENT_BASED_HEARTBEAT_ENABLED = true;
 
-  public static final String YARN_CLIENT_APPLICATION_MASTER_PROTOCOL_EVENT_BASED_HEARTBEAT_INTERVAL =
+  public static final String
+      YARN_CLIENT_APPLICATION_MASTER_PROTOCOL_EVENT_BASED_HEARTBEAT_INTERVAL =
       YARN_PREFIX + "client.application-master-protocol.event-based-heartbeat-interval-ms";
-  public static final int DEFAULT_YARN_CLIENT_APPLICATION_MASTER_PROTOCOL_EVENT_BASED_HEARTBEAT_INTERVAL = 50;
+  public static final int
+      DEFAULT_YARN_CLIENT_APPLICATION_MASTER_PROTOCOL_EVENT_BASED_HEARTBEAT_INTERVAL = 50;
+
+  ////////////////////////////////
+  // RM Notification
+  ////////////////////////////////
+
+  public static final String RM_NOTIFICATIONS_MANAGER_ENABLED =
+      RM_PREFIX + "notificationsmanager.enabled";
+  public static final boolean DEFAULT_RM_NOTIFICATIONS_MANAGER_ENABLED = true;
+
+  public static final String YARN_CLIENT_RM_NOTIFICATION_ENABLED =
+      YARN_PREFIX + "client.rm-notification.enabled";
+  public static final boolean DEFAULT_YARN_CLIENT_RM_NOTIFICATION_ENABLED = true;
+
+  public static final String YARN_CLIENT_RM_NOTIFICATION_PROTOCOL_PORTS_POOL =
+      YARN_PREFIX + "rm-notification-protocol.ports-pool";
+  public static final String DEFAULT_YARN_CLIENT_RM_NOTIFICATION_PROTOCOL_PORTS_POOL =
+      "10800-10900";
 
   ////////////////////////////////
   // Other Configs

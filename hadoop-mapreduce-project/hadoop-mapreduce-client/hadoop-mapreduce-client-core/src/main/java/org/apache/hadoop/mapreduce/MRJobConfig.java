@@ -941,4 +941,14 @@ public interface MRJobConfig {
   public static final int DEFAULT_MR_ENCRYPTED_INTERMEDIATE_DATA_BUFFER_KB =
           128;
 
+  /**
+   * RM notifications
+   */
+  public static final String MR_RM_NOTIFICATION_ENABLED =
+      MR_AM_PREFIX + "rm-notification.enabled";
+  public static final boolean DEFAULT_MR_RM_NOTIFICATION_ENABLED = true;
+  public static final String MR_RM_NOTIFICATION_PROTOCOL_PORTS_POOL =
+      MR_AM_PREFIX + "rm-notification-protocol.ports-pool";
+  public static final String DEFAULT_MR_RM_NOTIFICATION_PROTOCOL_PORTS_POOL =
+      "10800-10900";
 }

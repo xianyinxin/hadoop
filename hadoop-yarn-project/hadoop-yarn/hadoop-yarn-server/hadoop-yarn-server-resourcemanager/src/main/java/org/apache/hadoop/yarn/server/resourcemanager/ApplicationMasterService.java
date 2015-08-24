@@ -51,6 +51,8 @@ import org.apache.hadoop.yarn.api.protocolrecords.FinishApplicationMasterRequest
 import org.apache.hadoop.yarn.api.protocolrecords.FinishApplicationMasterResponse;
 import org.apache.hadoop.yarn.api.protocolrecords.RegisterApplicationMasterRequest;
 import org.apache.hadoop.yarn.api.protocolrecords.RegisterApplicationMasterResponse;
+import org.apache.hadoop.yarn.api.protocolrecords.RegisterNotificationAddressRequest;
+import org.apache.hadoop.yarn.api.protocolrecords.RegisterNotificationAddressResponse;
 import org.apache.hadoop.yarn.api.records.ApplicationAttemptId;
 import org.apache.hadoop.yarn.api.records.ApplicationId;
 import org.apache.hadoop.yarn.api.records.ApplicationSubmissionContext;
@@ -81,6 +83,7 @@ import org.apache.hadoop.yarn.ipc.RPCUtil;
 import org.apache.hadoop.yarn.ipc.YarnRPC;
 import org.apache.hadoop.yarn.security.AMRMTokenIdentifier;
 import org.apache.hadoop.yarn.server.resourcemanager.RMAuditLogger.AuditConstants;
+import org.apache.hadoop.yarn.server.resourcemanager.notificationsmanager.NotificationsManager;
 import org.apache.hadoop.yarn.server.resourcemanager.rmapp.RMApp;
 import org.apache.hadoop.yarn.server.resourcemanager.rmapp.attempt.AMLivelinessMonitor;
 import org.apache.hadoop.yarn.server.resourcemanager.rmapp.attempt.RMAppAttempt;
@@ -392,16 +395,64 @@ public class ApplicationMasterService extends AbstractService implements
   }
 
   @Override
+  public RegisterNotificationAddressResponse registerNotificationAddress (
+      RegisterNotificationAddressRequest request)
+      throws YarnException, IOException {
+
+    ApplicationAttemptId applicationAttemptId =
+        authorizeRequest().getApplicationAttemptId();
+
+    AllocateResponseLock lock = responseMap.get(applicationAttemptId);
+    if (lock == null) {
+      throwApplicationDoesNotExistInCacheException(applicationAttemptId);
+    }
+
+    if (!hasApplicationMasterRegistered(applicationAttemptId)) {
+      String message = "Application Master" + applicationAttemptId
+          + "hasn't been registered, please register it first.";
+      LOG.warn(message);
+      throw new InvalidApplicationMasterRequestException(message);
+    }
+
+    String host = request.getHost();
+    int port = request.getNotificationPort();
+    if (host.isEmpty() || port == -1) {
+      String message = "Invalid host or port: " + host + port;
+      throw new InvalidApplicationMasterRequestException(message);
+    }
+
+    RegisterNotificationAddressResponse response = recordFactory
+        .newRecordInstance(RegisterNotificationAddressResponse.class);
+    synchronized (lock) {
+      NotificationsManager manager = rmContext.getNotificationsManager();
+      if (manager != null) {
+        boolean success =
+            manager.registerAddressForAppAttempt(applicationAttemptId,
+                request.getHost(), request.getNotificationPort());
+        response.setIfSuccess(success);
+        if (success) {
+          response.setDiagnostics("Register notification address succeed: "
+              + host + port);
+        } else {
+          response.setDiagnostics("Register notification address failed: "
+              + host + port);
+        }
+      }
+    }
+    return response;
+  }
+
+  @Override
   public FinishApplicationMasterResponse finishApplicationMaster(
       FinishApplicationMasterRequest request) throws YarnException,
       IOException {
 
     ApplicationAttemptId applicationAttemptId =
         authorizeRequest().getApplicationAttemptId();
-    ApplicationId appId = applicationAttemptId.getApplicationId();
+      ApplicationId appId = applicationAttemptId.getApplicationId();
 
-    RMApp rmApp =
-        rmContext.getRMApps().get(applicationAttemptId.getApplicationId());
+      RMApp rmApp =
+          rmContext.getRMApps().get(applicationAttemptId.getApplicationId());
     // checking whether the app exits in RMStateStore at first not to throw
     // ApplicationDoesNotExistInCacheException before and after
     // RM work-preserving restart.
@@ -863,6 +914,8 @@ public class ApplicationMasterService extends AbstractService implements
     public int getNumAttemptsRunning() {
       return attemptsRunning.size();
     }
+
+    private int i = 0;
 
     public long getNextHeartbeatInterval(ApplicationAttemptId appAttemptId) {
       // TODO: consider discrimination on apps?

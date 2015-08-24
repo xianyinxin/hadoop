@@ -16,24 +16,27 @@
  * limitations under the License.
  */
 
-/**
- * These .proto interfaces are public and stable.
- * Please see http://wiki.apache.org/hadoop/Compatibility
- * for what changes are allowed for a *stable* .proto interface.
- */
-
 option java_package = "org.apache.hadoop.yarn.proto";
-option java_outer_classname = "ApplicationMasterProtocol";
+option java_outer_classname = "RMNotificationProtocol";
 option java_generic_services = true;
 option java_generate_equals_and_hash = true;
 package hadoop.yarn;
 
-import "yarn_service_protos.proto";
+////////////////////////////////////////////////////////////////////////
+////// RM NotificationsManager related records /////////////////////////
+////////////////////////////////////////////////////////////////////////
+enum NotificationTypeProto {
+    RM_CONTAINER_ALLOCATED = 1;
+}
 
+message NotificationProto {
+    required NotificationTypeProto notification_type = 1;
+}
 
-service ApplicationMasterProtocolService {
-  rpc registerApplicationMaster (RegisterApplicationMasterRequestProto) returns (RegisterApplicationMasterResponseProto);
-  rpc finishApplicationMaster (FinishApplicationMasterRequestProto) returns (FinishApplicationMasterResponseProto);
-  rpc allocate (AllocateRequestProto) returns (AllocateResponseProto);
-  rpc registerNotificationAddress (RegisterNotificationAddressRequestProto) returns (RegisterNotificationAddressResponseProto);
+message NotificationResponseProto {
+    optional bool notification_received = 1;
+}
+
+service RMNotificationProtocolService {
+  rpc handleRMNotification (NotificationProto) returns (NotificationResponseProto);
 }

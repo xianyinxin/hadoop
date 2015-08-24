@@ -33,6 +33,8 @@ import org.apache.hadoop.yarn.api.protocolrecords.FinishApplicationMasterRequest
 import org.apache.hadoop.yarn.api.protocolrecords.FinishApplicationMasterResponse;
 import org.apache.hadoop.yarn.api.protocolrecords.RegisterApplicationMasterRequest;
 import org.apache.hadoop.yarn.api.protocolrecords.RegisterApplicationMasterResponse;
+import org.apache.hadoop.yarn.api.protocolrecords.RegisterNotificationAddressRequest;
+import org.apache.hadoop.yarn.api.protocolrecords.RegisterNotificationAddressResponse;
 import org.apache.hadoop.yarn.exceptions.YarnException;
 import org.apache.hadoop.yarn.exceptions.YarnRuntimeException;
 import org.apache.hadoop.yarn.factories.impl.pb.RpcClientFactoryPBImpl;
@@ -127,6 +129,13 @@ public class TestRPCFactories {
     public AllocateResponse allocate(AllocateRequest request)
         throws YarnException, IOException {
       // TODO Auto-generated method stub
+      return null;
+    }
+
+    @Override
+    public RegisterNotificationAddressResponse registerNotificationAddress(
+        RegisterNotificationAddressRequest request)
+        throws YarnException, IOException {
       return null;
     }
   }

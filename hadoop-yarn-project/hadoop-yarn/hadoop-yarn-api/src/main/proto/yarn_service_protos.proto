@@ -96,6 +96,16 @@ enum SchedulerResourceTypes {
   CPU = 1;
 }
 
+message RegisterNotificationAddressRequestProto {
+  optional string host = 1;
+  optional int32 notification_port = 2 [default = -1];
+}
+
+message RegisterNotificationAddressResponseProto {
+  optional bool if_success = 1;
+  optional string diagnostics = 2;
+}
+
 //////////////////////////////////////////////////////
 /////// client_RM_Protocol ///////////////////////////
 //////////////////////////////////////////////////////

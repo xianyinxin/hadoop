@@ -20,6 +20,7 @@ package org.apache.hadoop.mapreduce.v2.app.rm;
 
 import java.io.IOException;
 import java.net.InetSocketAddress;
+import java.net.ServerSocket;
 import java.nio.ByteBuffer;
 import java.util.EnumSet;
 import java.util.Map;
@@ -43,15 +44,23 @@ import org.apache.hadoop.mapreduce.v2.util.MRWebAppUtil;
 import org.apache.hadoop.security.UserGroupInformation;
 import org.apache.hadoop.service.AbstractService;
 import org.apache.hadoop.yarn.api.ApplicationMasterProtocol;
+import org.apache.hadoop.yarn.api.RMNotificationHandler;
+import org.apache.hadoop.yarn.api.RMNotificationProtocol;
 import org.apache.hadoop.yarn.api.protocolrecords.FinishApplicationMasterRequest;
 import org.apache.hadoop.yarn.api.protocolrecords.FinishApplicationMasterResponse;
+import org.apache.hadoop.yarn.api.protocolrecords.NotificationRequest;
+import org.apache.hadoop.yarn.api.protocolrecords.NotificationResponse;
+import org.apache.hadoop.yarn.api.protocolrecords.NotificationType;
 import org.apache.hadoop.yarn.api.protocolrecords.RegisterApplicationMasterRequest;
 import org.apache.hadoop.yarn.api.protocolrecords.RegisterApplicationMasterResponse;
+import org.apache.hadoop.yarn.api.protocolrecords.RegisterNotificationAddressRequest;
+import org.apache.hadoop.yarn.api.protocolrecords.RegisterNotificationAddressResponse;
 import org.apache.hadoop.yarn.api.records.ApplicationAccessType;
 import org.apache.hadoop.yarn.api.records.ApplicationId;
 import org.apache.hadoop.yarn.api.records.FinalApplicationStatus;
 import org.apache.hadoop.yarn.api.records.Resource;
 import org.apache.hadoop.yarn.client.ClientRMProxy;
+import org.apache.hadoop.yarn.client.RMNotificationInbox;
 import org.apache.hadoop.yarn.event.EventHandler;
 import org.apache.hadoop.yarn.exceptions.ApplicationMasterNotRegisteredException;
 import org.apache.hadoop.yarn.exceptions.YarnException;
@@ -97,6 +106,8 @@ public abstract class RMCommunicator extends AbstractService
   private boolean isApplicationMasterRegistered = false;
 
   private EnumSet<SchedulerResourceTypes> schedulerResourceTypes;
+
+  private RMNotificationInbox inbox = null;
 
   public RMCommunicator(ClientService clientService, AppContext context) {
     super("RMCommunicator");
@@ -198,9 +209,95 @@ public abstract class RMCommunicator extends AbstractService
       LOG.info("queue: " + queue);
       job.setQueueName(queue);
       this.schedulerResourceTypes.addAll(response.getSchedulerResourceTypes());
+
+      // Init and start notification inbox
+      if (getConfig().getBoolean(MRJobConfig.MR_RM_NOTIFICATION_ENABLED,
+          MRJobConfig.DEFAULT_MR_RM_NOTIFICATION_ENABLED)) {
+        initNotificationInbox();
+      }
     } catch (Exception are) {
       LOG.error("Exception while registering", are);
       throw new YarnRuntimeException(are);
+    }
+  }
+
+  private void initNotificationInbox() {
+    RegisterNotificationAddressRequest request =
+        recordFactory
+            .newRecordInstance(RegisterNotificationAddressRequest.class);
+    request.setHost(clientService.getBindAddress().getHostName());
+    Configuration.IntegerRanges portsRange;
+    portsRange =
+        getConfig().getRange(MRJobConfig.MR_RM_NOTIFICATION_PROTOCOL_PORTS_POOL,
+            MRJobConfig.DEFAULT_MR_RM_NOTIFICATION_PROTOCOL_PORTS_POOL);
+    int port = -1;
+    for (Integer aPort : portsRange) {
+      if (isPortAvailable(aPort)) {
+        port = aPort;
+        break;
+      }
+    }
+    if (port != -1) {
+      request.setNotificationPort(port);
+      try {
+        RegisterNotificationAddressResponse response =
+            scheduler.registerNotificationAddress(request);
+        if (response.getIfSuccess()) {
+          inbox = new RMNotificationInbox(RMNotificationProtocol.class,
+              new InetSocketAddress(request.getHost(),
+                  request.getNotificationPort()),
+              getConfig(), new MRNotificationHandler());
+          inbox.start();
+          LOG.info("Initialized notification inbox with address: "
+              + request.getHost() + ", " + request.getNotificationPort());
+        } else {
+          LOG.warn("Register notification address failed: "
+              + response.getDiagnostics());
+        }
+      } catch (Exception e) {
+        LOG.warn("Exception while initialize notification inbox: " + e);
+      }
+    } else {
+      LOG.warn("Register notification address failed: no port can be bind.");
+    }
+  }
+
+  private boolean isPortAvailable(int port) {
+    boolean flag = false;
+    ServerSocket socket = null;
+    try {
+      socket = new ServerSocket(port);
+      flag = true;
+    } catch (IOException e) {
+      LOG.info("Port " + port + "is not available.");
+    } finally {
+      if (socket != null) {
+        try {
+          socket.close();
+        } catch (IOException e) {
+          LOG.warn("Exception while closing temp socket.");
+        }
+      }
+    }
+    return flag;
+  }
+
+  public class MRNotificationHandler implements RMNotificationHandler {
+
+    @Override
+    public NotificationResponse handle(NotificationRequest notification) {
+      if (notification.getNotificationType() == NotificationType.RM_CONTAINER_ALLOCATED) {
+        notifyAllocatorThread();
+        if (LOG.isDebugEnabled()) {
+          LOG.debug("Received notification from RM: " + notification.getNotificationType());
+        }
+      }
+      LOG.info("Received notification from RM: " + notification.getNotificationType());
+      NotificationResponse response =
+          RecordFactoryProvider.getRecordFactory(null)
+              .newRecordInstance(NotificationResponse.class);
+      response.setNotificationReceived(true);
+      return response;
     }
   }
 
@@ -262,6 +359,7 @@ public abstract class RMCommunicator extends AbstractService
           break;
         }
         LOG.info("Waiting for application to be successfully unregistered.");
+        if (inbox != null) inbox.stop();
         Thread.sleep(rmPollInterval);
       }
     } catch (ApplicationMasterNotRegisteredException e) {

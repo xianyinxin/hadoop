@@ -92,6 +92,8 @@ import org.apache.hadoop.yarn.api.protocolrecords.FinishApplicationMasterRequest
 import org.apache.hadoop.yarn.api.protocolrecords.FinishApplicationMasterResponse;
 import org.apache.hadoop.yarn.api.protocolrecords.RegisterApplicationMasterRequest;
 import org.apache.hadoop.yarn.api.protocolrecords.RegisterApplicationMasterResponse;
+import org.apache.hadoop.yarn.api.protocolrecords.RegisterNotificationAddressRequest;
+import org.apache.hadoop.yarn.api.protocolrecords.RegisterNotificationAddressResponse;
 import org.apache.hadoop.yarn.api.records.ApplicationAccessType;
 import org.apache.hadoop.yarn.api.records.ApplicationAttemptId;
 import org.apache.hadoop.yarn.api.records.ApplicationId;
@@ -2729,6 +2731,13 @@ public class TestRMContainerAllocator {
       containersToComplete.clear();
       containersToAllocate.clear();
       return response;
+    }
+
+    @Override
+    public RegisterNotificationAddressResponse registerNotificationAddress(
+        RegisterNotificationAddressRequest request)
+        throws YarnException, IOException {
+      return null;
     }
 
     public ContainerId assignContainer(String nodeName, boolean isReduce) {

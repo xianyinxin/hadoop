@@ -26,12 +26,15 @@ import org.apache.hadoop.yarn.api.ApplicationMasterProtocolPB;
 import org.apache.hadoop.yarn.api.protocolrecords.AllocateResponse;
 import org.apache.hadoop.yarn.api.protocolrecords.FinishApplicationMasterResponse;
 import org.apache.hadoop.yarn.api.protocolrecords.RegisterApplicationMasterResponse;
+import org.apache.hadoop.yarn.api.protocolrecords.RegisterNotificationAddressResponse;
 import org.apache.hadoop.yarn.api.protocolrecords.impl.pb.AllocateRequestPBImpl;
 import org.apache.hadoop.yarn.api.protocolrecords.impl.pb.AllocateResponsePBImpl;
 import org.apache.hadoop.yarn.api.protocolrecords.impl.pb.FinishApplicationMasterRequestPBImpl;
 import org.apache.hadoop.yarn.api.protocolrecords.impl.pb.FinishApplicationMasterResponsePBImpl;
 import org.apache.hadoop.yarn.api.protocolrecords.impl.pb.RegisterApplicationMasterRequestPBImpl;
 import org.apache.hadoop.yarn.api.protocolrecords.impl.pb.RegisterApplicationMasterResponsePBImpl;
+import org.apache.hadoop.yarn.api.protocolrecords.impl.pb.RegisterNotificationAddressRequestPBImpl;
+import org.apache.hadoop.yarn.api.protocolrecords.impl.pb.RegisterNotificationAddressResponsePBImpl;
 import org.apache.hadoop.yarn.exceptions.YarnException;
 import org.apache.hadoop.yarn.proto.YarnServiceProtos.AllocateRequestProto;
 import org.apache.hadoop.yarn.proto.YarnServiceProtos.AllocateResponseProto;
@@ -39,6 +42,8 @@ import org.apache.hadoop.yarn.proto.YarnServiceProtos.FinishApplicationMasterReq
 import org.apache.hadoop.yarn.proto.YarnServiceProtos.FinishApplicationMasterResponseProto;
 import org.apache.hadoop.yarn.proto.YarnServiceProtos.RegisterApplicationMasterRequestProto;
 import org.apache.hadoop.yarn.proto.YarnServiceProtos.RegisterApplicationMasterResponseProto;
+import org.apache.hadoop.yarn.proto.YarnServiceProtos.RegisterNotificationAddressRequestProto;
+import org.apache.hadoop.yarn.proto.YarnServiceProtos.RegisterNotificationAddressResponseProto;
 
 import com.google.protobuf.RpcController;
 import com.google.protobuf.ServiceException;
@@ -91,6 +96,21 @@ public class ApplicationMasterProtocolPBServiceImpl implements ApplicationMaster
       return ((RegisterApplicationMasterResponsePBImpl)response).getProto();
     } catch (YarnException e) {
       throw new ServiceException(e);
+    } catch (IOException e) {
+      throw new ServiceException(e);
+    }
+  }
+
+  @Override
+  public RegisterNotificationAddressResponseProto registerNotificationAddress(
+      RpcController arg0, RegisterNotificationAddressRequestProto proto)
+      throws ServiceException {
+    RegisterNotificationAddressRequestPBImpl request = new RegisterNotificationAddressRequestPBImpl(proto);
+    try {
+      RegisterNotificationAddressResponse response = real.registerNotificationAddress(request);
+      return ((RegisterNotificationAddressResponsePBImpl)response).getProto();
+    } catch (YarnException e) {
+      throw  new ServiceException(e);
     } catch (IOException e) {
       throw new ServiceException(e);
     }

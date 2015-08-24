@@ -19,6 +19,7 @@
 package org.apache.hadoop.yarn.server.resourcemanager.scheduler.capacity;
 
 import java.io.IOException;
+import java.net.InetSocketAddress;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
@@ -53,6 +54,8 @@ import org.apache.hadoop.yarn.factory.providers.RecordFactoryProvider;
 import org.apache.hadoop.yarn.nodelabels.CommonNodeLabelsManager;
 import org.apache.hadoop.yarn.security.AccessType;
 import org.apache.hadoop.yarn.server.resourcemanager.nodelabels.RMNodeLabelsManager;
+import org.apache.hadoop.yarn.server.resourcemanager.notificationsmanager.NotificationEvent;
+import org.apache.hadoop.yarn.server.resourcemanager.notificationsmanager.NotificationEventType;
 import org.apache.hadoop.yarn.server.resourcemanager.rmcontainer.RMContainer;
 import org.apache.hadoop.yarn.server.resourcemanager.rmcontainer.RMContainerEventType;
 import org.apache.hadoop.yarn.server.resourcemanager.rmcontainer.RMContainerState;
@@ -840,6 +843,16 @@ public class LeafQueue extends AbstractCSQueue {
         // Note: Update headroom to account for current allocation too...
         allocateResource(clusterResource, application, assigned,
             node.getPartition(), reservedOrAllocatedRMContainer);
+
+        // Send allocation succeed, send notification if NotificationsManager enabled
+        if (scheduler.getRMContext().getNotificationsManager() != null) {
+          InetSocketAddress addr =
+              scheduler.getRMContext().getNotificationsManager()
+                  .lookUpAddressBook(application.getApplicationAttemptId());
+          scheduler.getRMContext().getDispatcher().getEventHandler().
+              handle(new NotificationEvent(addr,
+                  NotificationEventType.RM_CONTAINER_ALLOCATED_EVENT));
+        }
 
         // Done
         return assignment;

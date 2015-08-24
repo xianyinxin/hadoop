@@ -31,6 +31,7 @@ import org.apache.hadoop.classification.InterfaceStability;
 import org.apache.hadoop.service.AbstractService;
 import org.apache.hadoop.yarn.api.protocolrecords.AllocateResponse;
 import org.apache.hadoop.yarn.api.protocolrecords.RegisterApplicationMasterResponse;
+import org.apache.hadoop.yarn.api.protocolrecords.RegisterNotificationAddressResponse;
 import org.apache.hadoop.yarn.api.records.ContainerId;
 import org.apache.hadoop.yarn.api.records.FinalApplicationStatus;
 import org.apache.hadoop.yarn.api.records.Priority;
@@ -241,7 +242,19 @@ public abstract class AMRMClient<T extends AMRMClient.ContainerRequest> extends
                                          int appHostPort,
                                          String appTrackingUrl) 
                throws YarnException, IOException;
-  
+
+  /**
+   * Register notification address.
+   * @param host where the master is running
+   * @param port on which master receives notifications from RM
+   * @return <code>RegisterNotificationResponse</code>
+   * @throws YarnException
+   * @throws IOException
+   */
+  public abstract RegisterNotificationAddressResponse
+               registerNotificationAddress(String host, int port)
+               throws YarnException, IOException;
+
   /**
    * Request additional containers and receive new container allocations.
    * Requests made via <code>addContainerRequest</code> are sent to the

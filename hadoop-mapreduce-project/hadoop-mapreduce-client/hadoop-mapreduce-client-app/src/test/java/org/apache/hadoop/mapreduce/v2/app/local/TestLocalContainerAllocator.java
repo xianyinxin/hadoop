@@ -43,6 +43,8 @@ import org.apache.hadoop.yarn.api.protocolrecords.FinishApplicationMasterRequest
 import org.apache.hadoop.yarn.api.protocolrecords.FinishApplicationMasterResponse;
 import org.apache.hadoop.yarn.api.protocolrecords.RegisterApplicationMasterRequest;
 import org.apache.hadoop.yarn.api.protocolrecords.RegisterApplicationMasterResponse;
+import org.apache.hadoop.yarn.api.protocolrecords.RegisterNotificationAddressRequest;
+import org.apache.hadoop.yarn.api.protocolrecords.RegisterNotificationAddressResponse;
 import org.apache.hadoop.yarn.api.records.ApplicationAttemptId;
 import org.apache.hadoop.yarn.api.records.ApplicationId;
 import org.apache.hadoop.yarn.api.records.Container;
@@ -256,6 +258,13 @@ public class TestLocalContainerAllocator {
           yarnToken,
           Collections.<ContainerResourceIncrease>emptyList(),
           Collections.<ContainerResourceDecrease>emptyList());
+    }
+
+    @Override
+    public RegisterNotificationAddressResponse registerNotificationAddress(
+        RegisterNotificationAddressRequest request)
+        throws YarnException, IOException {
+      return null;
     }
   }
 }
