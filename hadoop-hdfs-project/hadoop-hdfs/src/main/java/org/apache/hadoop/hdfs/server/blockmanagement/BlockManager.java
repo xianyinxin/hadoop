@@ -94,6 +94,7 @@ import org.apache.hadoop.hdfs.protocol.ErasureCodingPolicy;
 
 import static org.apache.hadoop.hdfs.util.StripedBlockUtil.getInternalBlockLength;
 
+import org.apache.hadoop.hdfs.util.RwLock;
 import org.apache.hadoop.metrics2.util.MBeans;
 import org.apache.hadoop.net.Node;
 import org.apache.hadoop.security.UserGroupInformation;
@@ -112,7 +113,7 @@ import org.slf4j.LoggerFactory;
  * Keeps information related to the blocks stored in the Hadoop cluster.
  */
 @InterfaceAudience.Private
-public class BlockManager implements BlockStatsMXBean {
+public class BlockManager implements RwLock, BlockStatsMXBean {
 
   public static final Logger LOG = LoggerFactory.getLogger(BlockManager.class);
   public static final Logger blockLog = NameNode.blockStateChangeLog;
@@ -125,6 +126,7 @@ public class BlockManager implements BlockStatsMXBean {
 
   private final Namesystem namesystem;
 
+  private final BlockManagerLock lock;
   private final DatanodeManager datanodeManager;
   private final HeartbeatManager heartbeatManager;
   private final BlockTokenSecretManager blockTokenSecretManager;
@@ -299,6 +301,7 @@ public class BlockManager implements BlockStatsMXBean {
   public BlockManager(final Namesystem namesystem, final Configuration conf)
     throws IOException {
     this.namesystem = namesystem;
+    this.lock = new BlockManagerLock(namesystem);
     datanodeManager = new DatanodeManager(this, namesystem, conf);
     heartbeatManager = datanodeManager.getHeartbeatManager();
 
@@ -518,7 +521,7 @@ public class BlockManager implements BlockStatsMXBean {
 
   /** Dump meta data to out. */
   public void metaSave(PrintWriter out) {
-    assert namesystem.hasWriteLock();
+    assert hasWriteLock();
     final List<DatanodeDescriptor> live = new ArrayList<DatanodeDescriptor>();
     final List<DatanodeDescriptor> dead = new ArrayList<DatanodeDescriptor>();
     datanodeManager.fetchDatanodes(live, dead, false);
@@ -550,7 +553,7 @@ public class BlockManager implements BlockStatsMXBean {
     // Dump all datanodes
     getDatanodeManager().datanodeDump(out);
   }
-  
+
   /**
    * Dump the metadata for the given block in a human-readable
    * form.
@@ -579,12 +582,12 @@ public class BlockManager implements BlockStatsMXBean {
       out.print(fileName + ": ");
     }
     // l: == live:, d: == decommissioned c: == corrupt e: == excess
-    out.print(block + ((usableReplicas > 0)? "" : " MISSING") + 
+    out.print(block + ((usableReplicas > 0)? "" : " MISSING") +
               " (replicas:" +
               " l: " + numReplicas.liveReplicas() +
               " d: " + numReplicas.decommissionedAndDecommissioning() +
               " c: " + numReplicas.corruptReplicas() +
-              " e: " + numReplicas.excessReplicas() + ") "); 
+              " e: " + numReplicas.excessReplicas() + ") ");
 
     Collection<DatanodeDescriptor> corruptNodes = 
                                   corruptReplicas.getNodes(block);
@@ -929,7 +932,7 @@ public class BlockManager implements BlockStatsMXBean {
       final boolean inSnapshot, FileEncryptionInfo feInfo,
       ErasureCodingPolicy ecPolicy)
       throws IOException {
-    assert namesystem.hasReadLock();
+    assert hasReadLock();
     if (blocks == null) {
       return null;
     } else if (blocks.length == 0) {
@@ -961,6 +964,41 @@ public class BlockManager implements BlockStatsMXBean {
           isFileUnderConstruction, locatedblocks, lastlb, isComplete, feInfo,
           ecPolicy);
     }
+  }
+
+  @Override
+  public void readLock() {
+    lock.readLock().lock();
+  }
+
+  @Override
+  public void readUnlock() {
+    lock.readLock().unlock();
+  }
+
+  @Override
+  public boolean hasReadLock() {
+    return lock.hasReadLock();
+  }
+
+  @Override
+  public boolean hasWriteLock() {
+    return lock.hasWriteLock();
+  }
+
+  @Override
+  public void writeLock() {
+    lock.writeLock().lock();
+  }
+
+  @Override
+  public void writeLockInterruptibly() throws InterruptedException {
+    lock.writeLock().lockInterruptibly();
+  }
+
+  @Override
+  public void writeUnlock() {
+    lock.writeLock().unlock();
   }
 
   /** @return current access keys. */
@@ -1078,12 +1116,12 @@ public class BlockManager implements BlockStatsMXBean {
   public BlocksWithLocations getBlocks(DatanodeID datanode, long size
       ) throws IOException {
     namesystem.checkOperation(OperationCategory.READ);
-    namesystem.readLock();
+    readLock();
     try {
       namesystem.checkOperation(OperationCategory.READ);
       return getBlocksWithLocations(datanode, size);  
     } finally {
-      namesystem.readUnlock();
+      readUnlock();
     }
   }
 
@@ -1146,7 +1184,7 @@ public class BlockManager implements BlockStatsMXBean {
 
   /** Remove the blocks associated to the given DatanodeStorageInfo. */
   void removeBlocksAssociatedTo(final DatanodeStorageInfo storageInfo) {
-    assert namesystem.hasWriteLock();
+    assert hasWriteLock();
     final Iterator<BlockInfo> it = storageInfo.getBlockIterator();
     DatanodeDescriptor node = storageInfo.getDatanodeDescriptor();
     while(it.hasNext()) {
@@ -1223,7 +1261,7 @@ public class BlockManager implements BlockStatsMXBean {
    */
   public void findAndMarkBlockAsCorrupt(final ExtendedBlock blk,
       final DatanodeInfo dn, String storageID, String reason) throws IOException {
-    assert namesystem.hasWriteLock();
+    assert hasWriteLock();
     final Block reportedBlock = blk.getLocalBlock();
     final BlockInfo storedBlock = getStoredBlock(reportedBlock);
     if (storedBlock == null) {
@@ -1401,13 +1439,13 @@ public class BlockManager implements BlockStatsMXBean {
    */
   int computeBlockRecoveryWork(int blocksToProcess) {
     List<List<BlockInfo>> blocksToReplicate = null;
-    namesystem.writeLock();
+    writeLock();
     try {
       // Choose the blocks to be replicated
       blocksToReplicate = neededReplications
           .chooseUnderReplicatedBlocks(blocksToProcess);
     } finally {
-      namesystem.writeUnlock();
+      writeUnlock();
     }
     return computeRecoveryWorkForBlocks(blocksToReplicate);
   }
@@ -1430,7 +1468,7 @@ public class BlockManager implements BlockStatsMXBean {
     List<BlockRecoveryWork> recovWork = new LinkedList<>();
 
     // Step 1: categorize at-risk blocks into replication and EC tasks
-    namesystem.writeLock();
+    writeLock();
     try {
       synchronized (neededReplications) {
         for (int priority = 0; priority < blocksToRecover.size(); priority++) {
@@ -1443,7 +1481,7 @@ public class BlockManager implements BlockStatsMXBean {
         }
       }
     } finally {
-      namesystem.writeUnlock();
+      writeUnlock();
     }
 
     // Step 2: choose target nodes for each recovery task
@@ -1465,7 +1503,7 @@ public class BlockManager implements BlockStatsMXBean {
     }
 
     // Step 3: add tasks to the DN
-    namesystem.writeLock();
+    writeLock();
     try {
       for(BlockRecoveryWork rw : recovWork){
         final DatanodeStorageInfo[] targets = rw.getTargets();
@@ -1481,7 +1519,7 @@ public class BlockManager implements BlockStatsMXBean {
         }
       }
     } finally {
-      namesystem.writeUnlock();
+      writeUnlock();
     }
 
     if (blockLog.isInfoEnabled()) {
@@ -1851,7 +1889,7 @@ public class BlockManager implements BlockStatsMXBean {
   private void processPendingReplications() {
     BlockInfo[] timedOutItems = pendingReplications.getTimedOutBlocks();
     if (timedOutItems != null) {
-      namesystem.writeLock();
+      writeLock();
       try {
         for (int i = 0; i < timedOutItems.length; i++) {
           /*
@@ -1869,7 +1907,7 @@ public class BlockManager implements BlockStatsMXBean {
           }
         }
       } finally {
-        namesystem.writeUnlock();
+        writeUnlock();
       }
       /* If we know the target datanodes where the replication timedout,
        * we could invoke decBlocksScheduled() on it. Its ok for now.
@@ -1878,7 +1916,7 @@ public class BlockManager implements BlockStatsMXBean {
   }
 
   public long requestBlockReportLeaseId(DatanodeRegistration nodeReg) {
-    assert namesystem.hasReadLock();
+    assert hasReadLock();
     DatanodeDescriptor node = null;
     try {
       node = datanodeManager.getDatanode(nodeReg);
@@ -1939,7 +1977,7 @@ public class BlockManager implements BlockStatsMXBean {
       final DatanodeStorage storage,
       final BlockListAsLongs newReport, BlockReportContext context,
       boolean lastStorageInRpc) throws IOException {
-    namesystem.writeLock();
+    writeLock();
     final long startTime = Time.monotonicNow(); //after acquiring write lock
     final long endTime;
     DatanodeDescriptor node;
@@ -2015,7 +2053,7 @@ public class BlockManager implements BlockStatsMXBean {
       }
     } finally {
       endTime = Time.monotonicNow();
-      namesystem.writeUnlock();
+      writeUnlock();
     }
 
     if (invalidatedBlocks != null) {
@@ -2042,7 +2080,7 @@ public class BlockManager implements BlockStatsMXBean {
     LOG.warn("processReport 0x{}: removing zombie storage {}, which no " +
             "longer exists on the DataNode.",
         Long.toHexString(context.getReportId()), zombie.getStorageID());
-    assert(namesystem.hasWriteLock());
+    assert hasWriteLock();
     Iterator<BlockInfo> iter = zombie.getBlockIterator();
     int prevBlocks = zombie.numBlocks();
     while (iter.hasNext()) {
@@ -2076,7 +2114,7 @@ public class BlockManager implements BlockStatsMXBean {
     long startTimeRescanPostponedMisReplicatedBlocks = Time.monotonicNow();
     long startPostponedMisReplicatedBlocksCount =
         getPostponedMisreplicatedBlocksCount();
-    namesystem.writeLock();
+    writeLock();
     try {
       // blocksPerRescan is the configured number of blocks per rescan.
       // Randomly select blocksPerRescan consecutive blocks from the HashSet
@@ -2129,7 +2167,7 @@ public class BlockManager implements BlockStatsMXBean {
         }
       }
     } finally {
-      namesystem.writeUnlock();
+      writeUnlock();
       long endPostponedMisReplicatedBlocksCount =
           getPostponedMisreplicatedBlocksCount();
       LOG.info("Rescan of postponedMisreplicatedBlocks completed in " +
@@ -2191,7 +2229,7 @@ public class BlockManager implements BlockStatsMXBean {
       BlockInfo block,
       long oldGenerationStamp, long oldNumBytes, 
       DatanodeStorageInfo[] newStorages) throws IOException {
-    assert namesystem.hasWriteLock();
+    assert hasWriteLock();
     BlockToMarkCorrupt b = null;
     if (block.getGenerationStamp() != oldGenerationStamp) {
       b = new BlockToMarkCorrupt(oldBlock, block, oldGenerationStamp,
@@ -2239,7 +2277,7 @@ public class BlockManager implements BlockStatsMXBean {
       final DatanodeStorageInfo storageInfo,
       final BlockListAsLongs report) throws IOException {
     if (report == null) return;
-    assert (namesystem.hasWriteLock());
+    assert (hasWriteLock());
     assert (storageInfo.getBlockReportCount() == 0);
 
     for (BlockReportReplica iblk : report) {
@@ -2667,7 +2705,7 @@ public class BlockManager implements BlockStatsMXBean {
   private void addStoredBlockImmediate(BlockInfo storedBlock, Block reported,
       DatanodeStorageInfo storageInfo)
   throws IOException {
-    assert (storedBlock != null && namesystem.hasWriteLock());
+    assert (storedBlock != null && hasWriteLock());
     if (!namesystem.isInStartupSafeMode()
         || isPopulatingReplQueues()) {
       addStoredBlock(storedBlock, reported, storageInfo, null, false);
@@ -2702,7 +2740,7 @@ public class BlockManager implements BlockStatsMXBean {
                                DatanodeDescriptor delNodeHint,
                                boolean logEveryBlock)
   throws IOException {
-    assert block != null && namesystem.hasWriteLock();
+    assert block != null && hasWriteLock();
     BlockInfo storedBlock;
     DatanodeDescriptor node = storageInfo.getDatanodeDescriptor();
     if (!block.isComplete()) {
@@ -2863,7 +2901,7 @@ public class BlockManager implements BlockStatsMXBean {
    * over or under replicated. Place it into the respective queue.
    */
   public void processMisReplicatedBlocks() {
-    assert namesystem.hasWriteLock();
+    assert hasWriteLock();
     stopReplicationInitializer();
     neededReplications.clear();
     replicationQueuesInitializer = new Daemon() {
@@ -2920,7 +2958,7 @@ public class BlockManager implements BlockStatsMXBean {
 
     while (namesystem.isRunning() && !Thread.currentThread().isInterrupted()) {
       int processed = 0;
-      namesystem.writeLockInterruptibly();
+      writeLockInterruptibly();
       try {
         while (processed < numBlocksPerIteration && blocksItr.hasNext()) {
           BlockInfo block = blocksItr.next();
@@ -2974,7 +3012,7 @@ public class BlockManager implements BlockStatsMXBean {
           break;
         }
       } finally {
-        namesystem.writeUnlock();
+        writeUnlock();
         // Make sure it is out of the write lock for sufficiently long time.
         Thread.sleep(sleepDuration);
       }
@@ -3072,7 +3110,7 @@ public class BlockManager implements BlockStatsMXBean {
   private void processOverReplicatedBlock(final BlockInfo block,
       final short replication, final DatanodeDescriptor addedNode,
       DatanodeDescriptor delNodeHint) {
-    assert namesystem.hasWriteLock();
+    assert hasWriteLock();
     if (addedNode == delNodeHint) {
       delNodeHint = null;
     }
@@ -3110,7 +3148,7 @@ public class BlockManager implements BlockStatsMXBean {
       BlockInfo storedBlock, short replication,
       DatanodeDescriptor addedNode,
       DatanodeDescriptor delNodeHint) {
-    assert namesystem.hasWriteLock();
+    assert hasWriteLock();
     // first form a rack to datanodes map and
     BlockCollection bc = getBlockCollection(storedBlock);
     if (storedBlock.isStriped()) {
@@ -3296,7 +3334,7 @@ public class BlockManager implements BlockStatsMXBean {
   }
 
   private void addToExcessReplicate(DatanodeInfo dn, BlockInfo storedBlock) {
-    assert namesystem.hasWriteLock();
+    assert hasWriteLock();
     LightWeightLinkedSet<BlockInfo> excessBlocks = excessReplicateMap.get(
         dn.getDatanodeUuid());
     if (excessBlocks == null) {
@@ -3327,7 +3365,7 @@ public class BlockManager implements BlockStatsMXBean {
    */
   public void removeStoredBlock(BlockInfo storedBlock, DatanodeDescriptor node) {
     blockLog.debug("BLOCK* removeStoredBlock: {} from {}", storedBlock, node);
-    assert (namesystem.hasWriteLock());
+    assert hasWriteLock();
     {
       if (storedBlock == null || !blocksMap.removeNode(storedBlock, node)) {
         blockLog.debug("BLOCK* removeStoredBlock: {} has already been" +
@@ -3504,7 +3542,7 @@ public class BlockManager implements BlockStatsMXBean {
    */
   public void processIncrementalBlockReport(final DatanodeID nodeID,
       final StorageReceivedDeletedBlocks srdb) throws IOException {
-    assert namesystem.hasWriteLock();
+    assert hasWriteLock();
     int received = 0;
     int deleted = 0;
     int receiving = 0;
@@ -3704,7 +3742,7 @@ public class BlockManager implements BlockStatsMXBean {
   }
 
   public void removeBlock(BlockInfo block) {
-    assert namesystem.hasWriteLock();
+    assert hasWriteLock();
     // No need to ACK blocks that are being removed entirely
     // from the namespace, since the removal of the associated
     // file already removes them from the block map below.
@@ -3738,7 +3776,7 @@ public class BlockManager implements BlockStatsMXBean {
   /** updates a block in under replication queue */
   private void updateNeededReplications(final BlockInfo block,
       final int curReplicasDelta, int expectedReplicasDelta) {
-    namesystem.writeLock();
+    writeLock();
     try {
       if (!isPopulatingReplQueues()) {
         return;
@@ -3756,7 +3794,7 @@ public class BlockManager implements BlockStatsMXBean {
             repl.decommissionedAndDecommissioning(), oldExpectedReplicas);
       }
     } finally {
-      namesystem.writeUnlock();
+      writeUnlock();
     }
   }
 
@@ -3816,7 +3854,7 @@ public class BlockManager implements BlockStatsMXBean {
   private int invalidateWorkForOneNode(DatanodeInfo dn) {
     final List<Block> toInvalidate;
     
-    namesystem.writeLock();
+    writeLock();
     try {
       // blocks should not be replicated or removed if safe mode is on
       if (namesystem.isInSafeMode()) {
@@ -3840,7 +3878,7 @@ public class BlockManager implements BlockStatsMXBean {
         return 0;
       }
     } finally {
-      namesystem.writeUnlock();
+      writeUnlock();
     }
     blockLog.debug("BLOCK* {}: ask {} to delete {}", getClass().getSimpleName(),
         dn, toInvalidate);
@@ -4093,12 +4131,12 @@ public class BlockManager implements BlockStatsMXBean {
     int workFound = this.computeBlockRecoveryWork(blocksToProcess);
 
     // Update counters
-    namesystem.writeLock();
+    writeLock();
     try {
       this.updateState();
       this.scheduledReplicationBlocksCount = workFound;
     } finally {
-      namesystem.writeUnlock();
+      writeUnlock();
     }
     workFound += this.computeInvalidateWork(nodesToProcess);
     return workFound;

@@ -35,6 +35,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ThreadLocalRandom;
+import java.util.concurrent.locks.Lock;
 
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.ContentSummary;
@@ -64,6 +65,7 @@ import org.junit.Test;
 import org.junit.rules.ExpectedException;
 import org.junit.runner.RunWith;
 import org.junit.runners.Parameterized;
+import org.mockito.internal.util.reflection.Whitebox;
 
 @RunWith(Parameterized.class)
 public class TestReplicationPolicy extends BaseReplicationPolicyTest {
@@ -1137,9 +1139,11 @@ public class TestReplicationPolicy extends BaseReplicationPolicyTest {
   public void testAddStoredBlockDoesNotCauseSkippedReplication()
       throws IOException {
     Namesystem mockNS = mock(Namesystem.class);
-    when(mockNS.hasWriteLock()).thenReturn(true);
-    when(mockNS.hasReadLock()).thenReturn(true);
     BlockManager bm = new BlockManager(mockNS, new HdfsConfiguration());
+    BlockManagerLock lock = mock(BlockManagerLock.class);
+    when(lock.hasWriteLock()).thenReturn(true);
+    when(lock.hasReadLock()).thenReturn(true);
+    Whitebox.setInternalState(bm, "lock", lock);
     UnderReplicatedBlocks underReplicatedBlocks = bm.neededReplications;
 
     BlockInfo block1 = genBlockInfo(ThreadLocalRandom.current().nextLong());
@@ -1186,9 +1190,12 @@ public class TestReplicationPolicy extends BaseReplicationPolicyTest {
       testConvertLastBlockToUnderConstructionDoesNotCauseSkippedReplication()
           throws IOException {
     Namesystem mockNS = mock(Namesystem.class);
-    when(mockNS.hasReadLock()).thenReturn(true);
-
     BlockManager bm = new BlockManager(mockNS, new HdfsConfiguration());
+    BlockManagerLock lock = mock(BlockManagerLock.class);
+    Lock impl = mock(Lock.class);
+    when(lock.hasReadLock()).thenReturn(true);
+    when(lock.writeLock()).thenReturn(impl);
+    Whitebox.setInternalState(bm, "lock", lock);
     UnderReplicatedBlocks underReplicatedBlocks = bm.neededReplications;
 
     long blkID1 = ThreadLocalRandom.current().nextLong();
@@ -1258,9 +1265,12 @@ public class TestReplicationPolicy extends BaseReplicationPolicyTest {
   public void testupdateNeededReplicationsDoesNotCauseSkippedReplication()
       throws IOException {
     Namesystem mockNS = mock(Namesystem.class);
-    when(mockNS.hasReadLock()).thenReturn(true);
-
     BlockManager bm = new BlockManager(mockNS, new HdfsConfiguration());
+    BlockManagerLock lock = mock(BlockManagerLock.class);
+    Lock impl = mock(Lock.class);
+    when(lock.hasReadLock()).thenReturn(true);
+    when(lock.writeLock()).thenReturn(impl);
+    Whitebox.setInternalState(bm, "lock", lock);
     UnderReplicatedBlocks underReplicatedBlocks = bm.neededReplications;
 
     BlockInfo block1 = genBlockInfo(ThreadLocalRandom.current().nextLong());

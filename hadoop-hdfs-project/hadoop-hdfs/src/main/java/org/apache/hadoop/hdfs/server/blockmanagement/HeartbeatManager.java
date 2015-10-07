@@ -356,7 +356,7 @@ class HeartbeatManager implements DatanodeStatistics {
       allAlive = dead == null && failedStorage == null;
       if (dead != null) {
         // acquire the fsnamesystem lock, and then remove the dead node.
-        namesystem.writeLock();
+        blockManager.writeLock();
         try {
           if (namesystem.isInStartupSafeMode()) {
             return;
@@ -365,12 +365,12 @@ class HeartbeatManager implements DatanodeStatistics {
             dm.removeDeadDatanode(dead);
           }
         } finally {
-          namesystem.writeUnlock();
+          blockManager.writeUnlock();
         }
       }
       if (failedStorage != null) {
         // acquire the fsnamesystem lock, and remove blocks on the storage.
-        namesystem.writeLock();
+        blockManager.writeLock();
         try {
           if (namesystem.isInStartupSafeMode()) {
             return;
@@ -379,7 +379,7 @@ class HeartbeatManager implements DatanodeStatistics {
             blockManager.removeBlocksAssociatedTo(failedStorage);
           }
         } finally {
-          namesystem.writeUnlock();
+          blockManager.writeUnlock();
         }
       }
     }
