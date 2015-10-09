@@ -49,6 +49,8 @@ import org.apache.hadoop.yarn.api.protocolrecords.FinishApplicationMasterRequest
 import org.apache.hadoop.yarn.api.protocolrecords.FinishApplicationMasterResponse;
 import org.apache.hadoop.yarn.api.protocolrecords.RegisterApplicationMasterRequest;
 import org.apache.hadoop.yarn.api.protocolrecords.RegisterApplicationMasterResponse;
+import org.apache.hadoop.yarn.api.protocolrecords.RegisterNotificationAddressRequest;
+import org.apache.hadoop.yarn.api.protocolrecords.RegisterNotificationAddressResponse;
 import org.apache.hadoop.yarn.api.records.ContainerId;
 import org.apache.hadoop.yarn.api.records.ContainerStatus;
 import org.apache.hadoop.yarn.api.records.FinalApplicationStatus;
@@ -227,6 +229,16 @@ public class AMRMClientImpl<T extends ContainerRequest> extends AMRMClient<T> {
         populateNMTokens(response.getNMTokensFromPreviousAttempts());
       }
     }
+    return response;
+  }
+
+  @Override
+  public RegisterNotificationAddressResponse registerNotificationAddress(
+      String host, int port) throws YarnException, IOException {
+    RegisterNotificationAddressRequest request =
+        RegisterNotificationAddressRequest.newInstance(host, port);
+    RegisterNotificationAddressResponse response =
+        rmClient.registerNotificationAddress(request);
     return response;
   }
 

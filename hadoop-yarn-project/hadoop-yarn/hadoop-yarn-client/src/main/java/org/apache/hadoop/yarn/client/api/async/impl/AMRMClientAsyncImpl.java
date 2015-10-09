@@ -19,6 +19,8 @@
 package org.apache.hadoop.yarn.client.api.async.impl;
 
 import java.io.IOException;
+import java.net.InetSocketAddress;
+import java.net.ServerSocket;
 import java.util.Collection;
 import java.util.List;
 import java.util.concurrent.BlockingQueue;
@@ -29,8 +31,15 @@ import org.apache.commons.logging.LogFactory;
 import org.apache.hadoop.classification.InterfaceAudience.Private;
 import org.apache.hadoop.classification.InterfaceStability.Unstable;
 import org.apache.hadoop.conf.Configuration;
+import org.apache.hadoop.yarn.api.RMNotificationHandler;
+import org.apache.hadoop.yarn.api.RMNotificationProtocol;
 import org.apache.hadoop.yarn.api.protocolrecords.AllocateResponse;
+import org.apache.hadoop.yarn.api.protocolrecords.NotificationRequest;
+import org.apache.hadoop.yarn.api.protocolrecords.NotificationResponse;
+import org.apache.hadoop.yarn.api.protocolrecords.NotificationType;
 import org.apache.hadoop.yarn.api.protocolrecords.RegisterApplicationMasterResponse;
+import org.apache.hadoop.yarn.api.protocolrecords.RegisterNotificationAddressRequest;
+import org.apache.hadoop.yarn.api.protocolrecords.RegisterNotificationAddressResponse;
 import org.apache.hadoop.yarn.api.records.Container;
 import org.apache.hadoop.yarn.api.records.ContainerId;
 import org.apache.hadoop.yarn.api.records.ContainerStatus;
@@ -38,15 +47,18 @@ import org.apache.hadoop.yarn.api.records.FinalApplicationStatus;
 import org.apache.hadoop.yarn.api.records.NodeReport;
 import org.apache.hadoop.yarn.api.records.Priority;
 import org.apache.hadoop.yarn.api.records.Resource;
+import org.apache.hadoop.yarn.client.RMNotificationInbox;
 import org.apache.hadoop.yarn.client.api.AMRMClient;
 import org.apache.hadoop.yarn.client.api.AMRMClient.ContainerRequest;
 import org.apache.hadoop.yarn.client.api.async.AMRMClientAsync;
 import org.apache.hadoop.yarn.client.api.impl.AMRMClientImpl;
+import org.apache.hadoop.yarn.conf.YarnConfiguration;
 import org.apache.hadoop.yarn.exceptions.ApplicationAttemptNotFoundException;
 import org.apache.hadoop.yarn.exceptions.YarnException;
 import org.apache.hadoop.yarn.exceptions.YarnRuntimeException;
 
 import com.google.common.annotations.VisibleForTesting;
+import org.apache.hadoop.yarn.factory.providers.RecordFactoryProvider;
 
 @Private
 @Unstable
@@ -64,6 +76,8 @@ extends AMRMClientAsync<T> {
   
   private volatile boolean keepRunning;
   private volatile float progress;
+
+  private RMNotificationInbox inbox = null;
   
   private volatile Throwable savedException;
   
@@ -138,7 +152,87 @@ extends AMRMClientAsync<T> {
     RegisterApplicationMasterResponse response = client
         .registerApplicationMaster(appHostName, appHostPort, appTrackingUrl);
     heartbeatThread.start();
+
+    if (getConfig().getBoolean(
+        YarnConfiguration.YARN_CLIENT_RM_NOTIFICATION_ENABLED,
+        YarnConfiguration.DEFAULT_YARN_CLIENT_RM_NOTIFICATION_ENABLED
+    )) {
+      // Init and start notification inbox
+      Configuration.IntegerRanges portsRange;
+      portsRange =
+          getConfig().getRange(
+              YarnConfiguration.YARN_CLIENT_RM_NOTIFICATION_PROTOCOL_PORTS_POOL,
+              YarnConfiguration
+                  .DEFAULT_YARN_CLIENT_RM_NOTIFICATION_PROTOCOL_PORTS_POOL);
+      int port = -1;
+      for (Integer aPort : portsRange) {
+        if (isPortAvailable(port)) {
+          port = aPort;
+          break;
+        }
+      }
+      if (port != -1) {
+        initNotificationInbox(appHostName, port);
+      } else {
+        LOG.warn("Register notification address failed: no port can be bind.");
+      }
+    }
     return response;
+  }
+
+  private void initNotificationInbox(String host, int port) {
+    try {
+      RegisterNotificationAddressResponse response =
+          client.registerNotificationAddress(host, port);
+      if (response.getIfSuccess()) {
+        inbox = new RMNotificationInbox(RMNotificationProtocol.class,
+            new InetSocketAddress(host, port),
+            getConfig(), new AMRMClientNotificationHandler());
+        inbox.start();
+        LOG.info("Initialized notification inbox with address: "
+            + host + ", " + port);
+      } else {
+        LOG.warn("Register notification address failed: "
+            + response.getDiagnostics());
+      }
+    } catch (Exception e) {
+      LOG.warn("Exception while initialize notification inbox: " + e);
+    }
+  }
+
+  private boolean isPortAvailable(int port) {
+    boolean flag = false;
+    ServerSocket socket = null;
+    try {
+      socket = new ServerSocket(port);
+      flag = true;
+    } catch (IOException e) {
+      LOG.info("Port " + port + "is not available.");
+    } finally {
+      if (socket != null) {
+        try {
+          socket.close();
+        } catch (IOException e) {
+          LOG.warn("Exception while closing temp socket.");
+        }
+      }
+    }
+    return flag;
+  }
+
+  public class AMRMClientNotificationHandler implements RMNotificationHandler {
+
+    @Override
+    public NotificationResponse handle(NotificationRequest notification) {
+      if (notification.getNotificationType() == NotificationType.RM_CONTAINER_ALLOCATED) {
+//        heartbeatThread.sendOutofBandHeartbeat();
+      }
+      NotificationResponse response =
+          RecordFactoryProvider.getRecordFactory(null)
+              .newRecordInstance(NotificationResponse.class);
+      response.setNotificationReceived(true);
+      return response;
+    }
   }
 
   /**
@@ -156,6 +250,7 @@ extends AMRMClientAsync<T> {
       keepRunning = false;
       client.unregisterApplicationMaster(appStatus, appMessage, appTrackingUrl);
     }
+    if (inbox != null) inbox.stop();
   }
 
   /**

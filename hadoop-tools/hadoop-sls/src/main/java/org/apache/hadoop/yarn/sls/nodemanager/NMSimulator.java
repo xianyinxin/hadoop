@@ -75,7 +75,7 @@ public class NMSimulator extends TaskRunner.Task {
   // heart beat response id
   private int RESPONSE_ID = 1;
   private final static Logger LOG = Logger.getLogger(NMSimulator.class);
-  
+
   public void init(String nodeIdStr, int memory, int cores,
           int dispatchTime, int heartBeatInterval, ResourceManager rm)
           throws IOException, YarnException {

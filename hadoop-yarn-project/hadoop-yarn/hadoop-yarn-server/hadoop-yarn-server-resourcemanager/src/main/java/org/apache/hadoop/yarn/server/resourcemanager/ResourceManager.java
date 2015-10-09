@@ -62,6 +62,8 @@ import org.apache.hadoop.yarn.server.resourcemanager.metrics.SystemMetricsPublis
 import org.apache.hadoop.yarn.server.resourcemanager.monitor.SchedulingEditPolicy;
 import org.apache.hadoop.yarn.server.resourcemanager.monitor.SchedulingMonitor;
 import org.apache.hadoop.yarn.server.resourcemanager.nodelabels.RMNodeLabelsManager;
+import org.apache.hadoop.yarn.server.resourcemanager.notificationsmanager.NotificationEventType;
+import org.apache.hadoop.yarn.server.resourcemanager.notificationsmanager.NotificationsManager;
 import org.apache.hadoop.yarn.server.resourcemanager.recovery.NullRMStateStore;
 import org.apache.hadoop.yarn.server.resourcemanager.recovery.RMStateStore;
 import org.apache.hadoop.yarn.server.resourcemanager.recovery.RMStateStore.RMState;
@@ -159,6 +161,7 @@ public class ResourceManager extends CompositeService implements Recoverable {
   private AppReportFetcher fetcher = null;
   protected ResourceTrackerService resourceTracker;
   private JvmPauseMonitor pauseMonitor;
+  protected NotificationsManager notificationsManager = null;
 
   @VisibleForTesting
   protected String webAppAddress;
@@ -535,6 +538,16 @@ public class ResourceManager extends CompositeService implements Recoverable {
       masterService = createApplicationMasterService();
       addService(masterService) ;
       rmContext.setApplicationMasterService(masterService);
+
+      boolean notiManagerEnabled = conf.getBoolean(
+          YarnConfiguration.RM_NOTIFICATIONS_MANAGER_ENABLED,
+          YarnConfiguration.DEFAULT_RM_NOTIFICATIONS_MANAGER_ENABLED);
+      if (notiManagerEnabled) {
+        notificationsManager = new NotificationsManager();
+        addService(notificationsManager);
+        rmContext.setNotificationsManager(notificationsManager);
+        rmDispatcher.register(NotificationEventType.class, notificationsManager);
+      }
 
       applicationACLsManager = new ApplicationACLsManager(conf);
 

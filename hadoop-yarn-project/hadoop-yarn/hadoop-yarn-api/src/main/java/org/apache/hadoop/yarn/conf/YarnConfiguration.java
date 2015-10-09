@@ -1831,6 +1831,23 @@ public class YarnConfiguration extends Configuration {
   public static final int DEFAULT_SHARED_CACHE_NM_UPLOADER_THREAD_COUNT = 20;
 
   ////////////////////////////////
+  // RM Notification
+  ////////////////////////////////
+
+  public static final String RM_NOTIFICATIONS_MANAGER_ENABLED =
+      RM_PREFIX + "notificationsmanager.enabled";
+  public static final boolean DEFAULT_RM_NOTIFICATIONS_MANAGER_ENABLED = true;
+
+  public static final String YARN_CLIENT_RM_NOTIFICATION_ENABLED =
+      YARN_PREFIX + "client.rm-notification.enabled";
+  public static final boolean DEFAULT_YARN_CLIENT_RM_NOTIFICATION_ENABLED = true;
+
+  public static final String YARN_CLIENT_RM_NOTIFICATION_PROTOCOL_PORTS_POOL =
+      YARN_PREFIX + "rm-notification-protocol.ports-pool";
+  public static final String DEFAULT_YARN_CLIENT_RM_NOTIFICATION_PROTOCOL_PORTS_POOL =
+      "10800-10900";
+
+  ////////////////////////////////
   // Other Configs
   ////////////////////////////////
 

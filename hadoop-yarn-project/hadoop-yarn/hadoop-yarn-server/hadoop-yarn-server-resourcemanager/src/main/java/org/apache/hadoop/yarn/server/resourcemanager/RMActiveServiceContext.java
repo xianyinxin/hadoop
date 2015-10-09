@@ -33,6 +33,7 @@ import org.apache.hadoop.yarn.event.Dispatcher;
 import org.apache.hadoop.yarn.server.resourcemanager.ahs.RMApplicationHistoryWriter;
 import org.apache.hadoop.yarn.server.resourcemanager.metrics.SystemMetricsPublisher;
 import org.apache.hadoop.yarn.server.resourcemanager.nodelabels.RMNodeLabelsManager;
+import org.apache.hadoop.yarn.server.resourcemanager.notificationsmanager.NotificationsManager;
 import org.apache.hadoop.yarn.server.resourcemanager.recovery.NullRMStateStore;
 import org.apache.hadoop.yarn.server.resourcemanager.recovery.RMStateStore;
 import org.apache.hadoop.yarn.server.resourcemanager.reservation.ReservationSystem;
@@ -92,6 +93,7 @@ public class RMActiveServiceContext {
   private NodesListManager nodesListManager;
   private ResourceTrackerService resourceTrackerService;
   private ApplicationMasterService applicationMasterService;
+  private NotificationsManager notificationsManager;
   private RMApplicationHistoryWriter rmApplicationHistoryWriter;
   private SystemMetricsPublisher systemMetricsPublisher;
   private RMNodeLabelsManager nodeLabelManager;
@@ -163,6 +165,12 @@ public class RMActiveServiceContext {
   @Unstable
   public ResourceTrackerService getResourceTrackerService() {
     return resourceTrackerService;
+  }
+
+  @Private
+  @Unstable
+  public NotificationsManager getNotificationsManager() {
+    return notificationsManager;
   }
 
   @Private
@@ -354,6 +362,12 @@ public class RMActiveServiceContext {
   @Unstable
   void setResourceTrackerService(ResourceTrackerService resourceTrackerService) {
     this.resourceTrackerService = resourceTrackerService;
+  }
+
+  @Private
+  @Unstable
+  void setNotificationsManager(NotificationsManager notificationsManager) {
+    this.notificationsManager = notificationsManager;
   }
 
   @Private

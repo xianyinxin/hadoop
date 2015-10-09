@@ -18,6 +18,7 @@
 
 package org.apache.hadoop.yarn.server.resourcemanager.scheduler.fair;
 
+import java.net.InetSocketAddress;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
@@ -38,6 +39,8 @@ import org.apache.hadoop.yarn.api.records.ApplicationAttemptId;
 import org.apache.hadoop.yarn.api.records.QueueACL;
 import org.apache.hadoop.yarn.api.records.QueueUserACLInfo;
 import org.apache.hadoop.yarn.api.records.Resource;
+import org.apache.hadoop.yarn.server.resourcemanager.notificationsmanager.NotificationEvent;
+import org.apache.hadoop.yarn.server.resourcemanager.notificationsmanager.NotificationEventType;
 import org.apache.hadoop.yarn.server.resourcemanager.resource.ResourceWeights;
 import org.apache.hadoop.yarn.server.resourcemanager.rmcontainer.RMContainer;
 import org.apache.hadoop.yarn.server.resourcemanager.scheduler.ActiveUsersManager;
@@ -338,6 +341,15 @@ public class FSLeafQueue extends FSQueue {
         if (LOG.isDebugEnabled()) {
           LOG.debug("Assigned container in queue:" + getName() + " " +
               "container:" + assigned);
+        }
+        // if NotificationsManager is enabled,
+        if (scheduler.getRMContext().getNotificationsManager() != null) {
+          InetSocketAddress addr =
+              scheduler.getRMContext().getNotificationsManager()
+                  .lookUpAddressBook(sched.getApplicationAttemptId());
+          scheduler.getRMContext().getDispatcher().getEventHandler().
+              handle(new NotificationEvent(addr,
+                  NotificationEventType.RM_CONTAINER_ALLOCATED_EVENT));
         }
         break;
       }

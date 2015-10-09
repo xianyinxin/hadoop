@@ -34,17 +34,22 @@ import org.apache.hadoop.yarn.api.protocolrecords.FinishApplicationMasterRequest
 import org.apache.hadoop.yarn.api.protocolrecords.FinishApplicationMasterResponse;
 import org.apache.hadoop.yarn.api.protocolrecords.RegisterApplicationMasterRequest;
 import org.apache.hadoop.yarn.api.protocolrecords.RegisterApplicationMasterResponse;
+import org.apache.hadoop.yarn.api.protocolrecords.RegisterNotificationAddressRequest;
+import org.apache.hadoop.yarn.api.protocolrecords.RegisterNotificationAddressResponse;
 import org.apache.hadoop.yarn.api.protocolrecords.impl.pb.AllocateRequestPBImpl;
 import org.apache.hadoop.yarn.api.protocolrecords.impl.pb.AllocateResponsePBImpl;
 import org.apache.hadoop.yarn.api.protocolrecords.impl.pb.FinishApplicationMasterRequestPBImpl;
 import org.apache.hadoop.yarn.api.protocolrecords.impl.pb.FinishApplicationMasterResponsePBImpl;
 import org.apache.hadoop.yarn.api.protocolrecords.impl.pb.RegisterApplicationMasterRequestPBImpl;
 import org.apache.hadoop.yarn.api.protocolrecords.impl.pb.RegisterApplicationMasterResponsePBImpl;
+import org.apache.hadoop.yarn.api.protocolrecords.impl.pb.RegisterNotificationAddressRequestPBImpl;
+import org.apache.hadoop.yarn.api.protocolrecords.impl.pb.RegisterNotificationAddressResponsePBImpl;
 import org.apache.hadoop.yarn.exceptions.YarnException;
 import org.apache.hadoop.yarn.ipc.RPCUtil;
 import org.apache.hadoop.yarn.proto.YarnServiceProtos.AllocateRequestProto;
 import org.apache.hadoop.yarn.proto.YarnServiceProtos.FinishApplicationMasterRequestProto;
 import org.apache.hadoop.yarn.proto.YarnServiceProtos.RegisterApplicationMasterRequestProto;
+import org.apache.hadoop.yarn.proto.YarnServiceProtos.RegisterNotificationAddressRequestProto;
 
 import com.google.protobuf.ServiceException;
 
@@ -105,6 +110,21 @@ public class ApplicationMasterProtocolPBClientImpl implements ApplicationMasterP
     try {
       return new RegisterApplicationMasterResponsePBImpl(
         proxy.registerApplicationMaster(null, requestProto));
+    } catch (ServiceException e) {
+      RPCUtil.unwrapAndThrowException(e);
+      return null;
+    }
+  }
+
+  @Override
+  public RegisterNotificationAddressResponse registerNotificationAddress(
+      RegisterNotificationAddressRequest request) throws YarnException,
+      IOException {
+    RegisterNotificationAddressRequestProto requestProto =
+        ((RegisterNotificationAddressRequestPBImpl) request).getProto();
+    try {
+      return new RegisterNotificationAddressResponsePBImpl(
+          proxy.registerNotificationAddress(null, requestProto));
     } catch (ServiceException e) {
       RPCUtil.unwrapAndThrowException(e);
       return null;

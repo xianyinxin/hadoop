@@ -34,6 +34,7 @@ import org.apache.hadoop.yarn.event.Dispatcher;
 import org.apache.hadoop.yarn.server.resourcemanager.ahs.RMApplicationHistoryWriter;
 import org.apache.hadoop.yarn.server.resourcemanager.metrics.SystemMetricsPublisher;
 import org.apache.hadoop.yarn.server.resourcemanager.nodelabels.RMNodeLabelsManager;
+import org.apache.hadoop.yarn.server.resourcemanager.notificationsmanager.NotificationsManager;
 import org.apache.hadoop.yarn.server.resourcemanager.recovery.RMStateStore;
 import org.apache.hadoop.yarn.server.resourcemanager.reservation.ReservationSystem;
 import org.apache.hadoop.yarn.server.resourcemanager.rmapp.RMApp;
@@ -115,17 +116,17 @@ public class RMContextImpl implements RMContext {
       ClientToAMTokenSecretManagerInRM clientToAMTokenSecretManager,
       RMApplicationHistoryWriter rmApplicationHistoryWriter) {
     this(
-      rmDispatcher,
-      containerAllocationExpirer,
-      amLivelinessMonitor,
-      amFinishingMonitor,
-      delegationTokenRenewer,
-      appTokenSecretManager,
-      containerTokenSecretManager,
-      nmTokenSecretManager,
-      clientToAMTokenSecretManager,
-      rmApplicationHistoryWriter,
-      null);
+        rmDispatcher,
+        containerAllocationExpirer,
+        amLivelinessMonitor,
+        amFinishingMonitor,
+        delegationTokenRenewer,
+        appTokenSecretManager,
+        containerTokenSecretManager,
+        nmTokenSecretManager,
+        clientToAMTokenSecretManager,
+        rmApplicationHistoryWriter,
+        null);
   }
 
   @Override
@@ -233,6 +234,11 @@ public class RMContextImpl implements RMContext {
     return activeServiceContext.getResourceTrackerService();
   }
 
+  @Override
+  public NotificationsManager getNotificationsManager() {
+    return activeServiceContext.getNotificationsManager();
+  }
+
   void setHAEnabled(boolean isHAEnabled) {
     this.isHAEnabled = isHAEnabled;
   }
@@ -326,6 +332,10 @@ public class RMContextImpl implements RMContext {
 
   void setResourceTrackerService(ResourceTrackerService resourceTrackerService) {
     activeServiceContext.setResourceTrackerService(resourceTrackerService);
+  }
+
+  void setNotificationsManager(NotificationsManager notificationsManager) {
+    activeServiceContext.setNotificationsManager(notificationsManager);
   }
 
   @Override

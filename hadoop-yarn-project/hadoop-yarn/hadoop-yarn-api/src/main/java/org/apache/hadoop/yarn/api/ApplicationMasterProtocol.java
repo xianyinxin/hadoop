@@ -30,6 +30,8 @@ import org.apache.hadoop.yarn.api.protocolrecords.FinishApplicationMasterRequest
 import org.apache.hadoop.yarn.api.protocolrecords.FinishApplicationMasterResponse;
 import org.apache.hadoop.yarn.api.protocolrecords.RegisterApplicationMasterRequest;
 import org.apache.hadoop.yarn.api.protocolrecords.RegisterApplicationMasterResponse;
+import org.apache.hadoop.yarn.api.protocolrecords.RegisterNotificationAddressRequest;
+import org.apache.hadoop.yarn.api.protocolrecords.RegisterNotificationAddressResponse;
 import org.apache.hadoop.yarn.api.records.Container;
 import org.apache.hadoop.yarn.api.records.ResourceRequest;
 import org.apache.hadoop.yarn.conf.YarnConfiguration;
@@ -169,4 +171,38 @@ public interface ApplicationMasterProtocol {
   @AtMostOnce
   public AllocateResponse allocate(AllocateRequest request) 
   throws YarnException, IOException;
+
+  /**
+   * <p>
+   * The interface used by a new <code>ApplicationMaster</code> to register its
+   * notification address with the <code>ResourceManager</code>.
+   * </p>
+   *
+   * <p>
+   * The <code>ApplicationMaster</code> needs to provide details including host
+   * and prot. as specified in {@link RegisterNotificationAddressRequest}.
+   * </p>
+   *
+   * <p>
+   * The <code>ResourceManager</code> responds with information about the register
+   * as specified in {@link RegisterNotificationAddressResponse}.
+   * </p>
+   *
+   * @param request
+   *          registration request
+   * @return registration respose
+   * @throws YarnException
+   * @throws IOException
+   * @throws InvalidApplicationMasterRequestException
+   *           The exception is thrown when the required information is not
+   *           provided.
+   * @see RegisterNotificationAddressRequest
+   * @see RegisterNotificationAddressResponse
+   */
+  @Public
+  @Stable
+  @Idempotent
+  public RegisterNotificationAddressResponse registerNotificationAddress(
+      RegisterNotificationAddressRequest request)
+      throws YarnException, IOException;
 }

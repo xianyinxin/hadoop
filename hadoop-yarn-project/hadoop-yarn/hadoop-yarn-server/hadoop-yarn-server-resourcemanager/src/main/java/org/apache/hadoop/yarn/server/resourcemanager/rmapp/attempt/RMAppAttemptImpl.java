@@ -71,6 +71,7 @@ import org.apache.hadoop.yarn.server.resourcemanager.RMContext;
 import org.apache.hadoop.yarn.server.resourcemanager.RMServerUtils;
 import org.apache.hadoop.yarn.server.resourcemanager.amlauncher.AMLauncherEvent;
 import org.apache.hadoop.yarn.server.resourcemanager.amlauncher.AMLauncherEventType;
+import org.apache.hadoop.yarn.server.resourcemanager.notificationsmanager.NotificationsManager;
 import org.apache.hadoop.yarn.server.resourcemanager.recovery.records.ApplicationAttemptStateData;
 import org.apache.hadoop.yarn.server.resourcemanager.recovery.records.ApplicationStateData;
 import org.apache.hadoop.yarn.server.resourcemanager.recovery.RMStateStore;
@@ -1487,6 +1488,12 @@ public class RMAppAttemptImpl implements RMAppAttempt, Recoverable {
           appAttempt.getAppAttemptId());
       appAttempt.rmContext.getAMFinishingMonitor().unregister(
           appAttempt.getAppAttemptId());
+
+      NotificationsManager manager =
+          appAttempt.rmContext.getNotificationsManager();
+      if (manager != null) {
+        manager.removeNotifierForAppAttempt(appAttempt.getAppAttemptId());
+      }
 
       if(!appAttempt.submissionContext.getUnmanagedAM()) {
         // Tell the launcher to cleanup.
